@@ -29,6 +29,7 @@ import numpy as np
 import machup.helpers
 
 
+
 class Airplane:
     """Defines the geometry for an airplane.
 
@@ -63,7 +64,10 @@ class Airplane:
     def __init__(self, name="", position=None, inputfile=None):
         self.name = name
         self._wings = {}
+        self._props = {}
         self._cg_loc = np.zeros(3)
+        self._long_ref = None
+        self._lat_ref = None
         self._position = position
         self._connections = {}
 
@@ -79,10 +83,27 @@ class Airplane:
             self.cg_location(data["plane"]["CGx"],
                              data["plane"]["CGy"],
                              data["plane"]["CGz"])
+            self._long_ref = data["reference"]["longitudinal_length"]
+            self._lat_ref = data["reference"]["lateral_length"]
+            self._units = self._check_units(data["condition"].get("units",None))
 
-            self._map_wing_connections(data["wings"])
-            for wing_key, wing_dict in data["wings"].items():
-                self._add_wing_from_inputfile(wing_key, wing_dict)
+            if "wings" in data:
+                self._map_wing_connections(data["wings"])
+                for wing_key, wing_dict in data["wings"].items():
+                    self._add_wing_from_inputfile(wing_key, wing_dict)
+            if "propellers" in data:
+                for prop_key, prop_dict in data["propellers"].items():
+                    self._add_prop_from_inputfile(prop_key, prop_dict)
+
+    def _check_units(self, units):
+        if units == "English" or units == "english": 
+            return "English"
+        elif units == "SI" or units == "si" or units == "Si":
+            return "SI"
+        elif units == None:
+            return None
+        else:
+            raise RuntimeError(units+"is not a valid units descriptor")
 
     def _map_wing_connections(self, wings_dict):
         # Create a map of wing_name to parent name and connect location.
@@ -106,6 +127,7 @@ class Airplane:
                              position=[wing_dict["connect"]["dx"],
                                        wing_dict["connect"]["dy"],
                                        wing_dict["connect"]["dz"]],
+                             is_main = wing_dict["is_main"],
                              yoffset=wing_dict["connect"]["yoffset"],
                              semispan=wing_dict["span"],
                              sweep=wing_dict["sweep"],
@@ -165,6 +187,64 @@ class Airplane:
                                  mix=control_dict["mix"],
                                  sealed=control_dict["is_sealed"])
 
+    def _add_prop_from_inputfile(self, prop_name, prop_dict):
+        # parses inputfile and adds corresponding wing
+        prop = self.add_prop(prop_name,
+                             position=[prop_dict["position"]["dx"],
+                                       prop_dict["position"]["dy"],
+                                       prop_dict["position"]["dz"]],
+                             orientation = [prop_dict["orientation"]["elevation_angle"],
+                                            prop_dict["orientation"]["heading_angle"]],
+                             nodes=prop_dict["radial_nodes"],
+                             diameter=prop_dict["diameter"],
+                             hub_diameter=prop_dict["hub_diameter"],
+                             num_of_blades=prop_dict["num_of_blades"],
+                             rot_dir=prop_dict["rotation_direction"],
+                             pitch_info=prop_dict["pitch"],
+                             chord_info=prop_dict["chord"],
+                             electric_motor = prop_dict.get("electric_motor",{}),
+                             airfoils=prop_dict["airfoils"])
+
+        
+        # add airfoils to prop
+        airfoils = list(prop_dict["airfoils"])
+        if len(airfoils) > 1:
+            root = prop_dict["airfoils"][airfoils[0]]["properties"]
+            tip = prop_dict["airfoils"][airfoils[1]]["properties"]
+            prop.airfoil(airfoils[0],
+                         "root",
+                         alpha_L0=root["alpha_L0"],
+                         CL_alpha=root["CL_alpha"],
+                         Cm_L0=root["Cm_L0"],
+                         Cm_alpha=root["Cm_alpha"],
+                         CD0=root["CD0"],
+                         CD0_L=root["CD0_L"],
+                         CD0_L2=root["CD0_L2"],
+                         CL_max=root["CL_max"])
+            prop.airfoil(airfoils[1],
+                         "tip",
+                         alpha_L0=tip["alpha_L0"],
+                         CL_alpha=tip["CL_alpha"],
+                         Cm_L0=tip["Cm_L0"],
+                         Cm_alpha=tip["Cm_alpha"],
+                         CD0=tip["CD0"],
+                         CD0_L=tip["CD0_L"],
+                         CD0_L2=tip["CD0_L2"],
+                         CL_max=tip["CL_max"])
+        else:
+            root = prop_dict["airfoils"][airfoils[0]]["properties"]
+            prop.airfoil(airfoils[0],
+                         "both",
+                         alpha_L0=root["alpha_L0"],
+                         CL_alpha=root["CL_alpha"],
+                         Cm_L0=root["Cm_L0"],
+                         Cm_alpha=root["Cm_alpha"],
+                         CD0=root["CD0"],
+                         CD0_L=root["CD0_L"],
+                         CD0_L2=root["CD0_L2"],
+                         CL_max=root["CL_max"])
+        
+
     def get_num_sections(self):
         """Get the total number of sections of all of the wings.
 
@@ -193,6 +273,20 @@ class Airplane:
             segments.extend(wing.get_wingsegments())
         return segments
 
+    def get_props(self):
+        """Get a list of all of the props in the airplane.
+
+        Returns
+        -------
+        list
+            List of all Props in airplane.
+
+        """
+        props = []
+        for prop in self._props.values():
+            props.append(prop)
+        return props
+
     def add_wing(self, name, connect_to=(None, 'tip'), side='both', **dims):
         """Add wing to airplane.
 
@@ -219,6 +313,38 @@ class Airplane:
         self._wings[name].connect_to(parent, connect_at)
 
         return self._wings[name]
+    
+    def add_prop(self, name, **dims):
+        """Add prop to airplane.
+
+        Parameters
+        ----------
+        name: name of the prop to be added
+        **dims:
+            All of properties need to specify a Propeller can be passed
+            in as key word arguments. These include the following:
+            position - list containing x,y,z position of prop,
+            orientation - list containing elevation angle and heading angle of prop in degrees,
+            nodes - number of points along radius used for calculating prop performace,
+            diameter - diameter of prop,
+            hub_diameter - diameter of prop hub,
+            num_of_blades - number of propeller blades,
+            rot_dir - direction of rotation of prop. Can be given as string ("CCW" or "CW") or int ("1" or "0"),
+            pitch_type - method for defining pitch of prop. Values can be "ratio" for pitch to diameter ratio, "unit" for a given pitch value with unit of measurement, or "from_file" for .txt file containing blade angle distribution in degrees.
+            pitch_info - dictionary containing necessary info for pitch_type selected
+            chord_type - method for defining chord distribution of prop. Values can be "linear" for a linear interpolation between given root and tip chord values, "Elliptical" for a simple elliptical chord distribution, or "from_file" for .txt file containing chord distribution.
+            chord_info - dictionary containing necessary info for chord_type selected
+            electric_motor - dictionary containing necessary info for electric motor analysis
+            airfoils - dicitonary containing airfoil data
+
+        Returns
+        -------
+        None
+
+        """
+        self._props[name] = Prop(name, dims)
+
+        return self._props[name]
 
     def get_cg_location(self):
         """Get the location of the center of gravity.
@@ -230,6 +356,20 @@ class Airplane:
 
         """
         return self._cg_loc
+
+    def get_units(self):
+        """Get the type of units used in calculation.
+           This information is necessary for determining
+           the rotation speed of an electric motor based 
+           on throttle input. 
+
+        Returns
+        -------
+        string
+            string describing units used in calculations. Can be either "English" or "SI"
+
+        """
+        return self._units
 
     def cg_location(self, x_coord=None, y_coord=None, z_coord=None):
         """Set the location of the center of gravity.
@@ -250,6 +390,21 @@ class Airplane:
             self._cg_loc[1] = y_coord
         if z_coord:
             self._cg_loc[2] = z_coord
+
+    def set_reference_lengths(self, lateral = None, longitudinal = None):
+        """Set the reference lengths used to nondimensionalize the coefficients.
+
+        Parameters
+        -------
+        lateral
+            lateral reference length (typically the wingspan of the main wing)
+        longitudinal
+            longitudinal reference length (typically the average chord of the main wing)
+            
+
+        """
+        self._lat_ref = lateral
+        self._long_ref = longitudinal
 
     def get_position(self, at):
         """Get the position of the Airplane in the simulation.
@@ -275,6 +430,27 @@ class Airplane:
 
         return np.array([0., 0., 0.])
 
+    def get_long_ref(self):
+        """Get the longitudinal reference length.
+
+        Returns
+        -------
+        float
+            longitudinal reference length.
+
+        """
+        return self._long_ref
+
+    def get_lat_ref(self):
+        """Get the lateral reference length.
+
+        Returns
+        -------
+        float
+            lateral reference length.
+
+        """
+        return self._lat_ref
 
 class Wing:
     """Defines the geometry for a wing.
@@ -521,6 +697,7 @@ class WingSegment:
     def __init__(self, name, side, dims):
         self.name = name
         self._parent = None
+        self._is_main = 1
         self._connect_at = "tip"
         self._side = side
         self._delta_pos = np.array([0., 0., 0.])
@@ -542,21 +719,34 @@ class WingSegment:
 
     def _unpack(self, dims):
         delta_pos = dims.get("position", [0., 0., 0.])
+        self._is_main = dims.get("is_main",1)
         self._delta_pos[0] = delta_pos[0]
         self._delta_pos[1] = delta_pos[1]
         self._delta_pos[2] = delta_pos[2]
         self._dimensions["yoffset"] = dims.get("yoffset", 0.)
-        self._dimensions["span"] = dims["semispan"]
-        self._dimensions["root_chord"] = dims["root_chord"]
+        self._dimensions["span"] = dims.get("semispan",4)
+        self._dimensions["root_chord"] = dims.get("root_chord",1)
         self._dimensions["tip_chord"] = dims.get("tip_chord",
-                                                 dims["root_chord"])
+                                                 self._dimensions["root_chord"])
         self._dimensions["sweep"] = dims.get("sweep", 0.)
         self._dimensions["dihedral"] = dims.get("dihedral", 0.)
         self._dimensions["mounting_angle"] = dims.get("mount_angle", 0.)
         self._dimensions["washout"] = dims.get("washout", 0.)
         self._num_sections = dims.get("grid", 40)
+        '''
+        if "airfoils" in dims:
+            airfoils = list(dims["airfoils"].keys())
+            if len(airfoils) > 1:
+                self._root_airfoil = Airfoil(dims["airfoils"][airfoils[0]])
+                self._tip_airfoil = Airfoil(dims["airfoils"][airfoils[1]])
+            else:
+                self._root_airfoil = Airfoil(dims["airfoils"][airfoils[0]])
+                self._tip_airfoil = Airfoil(dims["airfoils"][airfoils[0]])
+        else:
+        '''
         self._root_airfoil = Airfoil()
         self._tip_airfoil = Airfoil()
+
 
     def connect_to(self, parent, at):
         """Define a connection between WingSegment and a "parent" geometry.
@@ -833,6 +1023,224 @@ class WingSegment:
         """
         return self._control_surface.get_is_control_sealed()
 
+class Prop:
+    """Defines the geometry for a propeller.
+
+    Parameters
+    ----------
+    prop_name : str
+        Name of wing to be added. This will be used if the user wants to
+        access the wing object at a later time.
+    prop_dict: dict
+        Python dictionary that contains all of the necessary information
+        to build the wing.
+
+    Returns
+    -------
+    Prop
+        Returns the newly created prop object.
+
+    Examples:
+    --------
+
+    """
+    def __init__(self, prop_name, prop_dict):
+        self.name = prop_name
+        self._unpack(prop_dict)
+
+
+
+    def _unpack(self, prop_dict):
+        self._position = prop_dict.get("position", [0.,0.,0.])
+        self._orientation = prop_dict.get("orientation", [0.,0.])
+        self._nodes = prop_dict.get("nodes", 100)
+        self._diameter = prop_dict.get("diameter", 1.0)
+        self._hub_diameter = prop_dict.get("hub_diameter", 0.1)
+        self._blades = prop_dict.get("num_of_blades", 2)
+        self._rot_dir = prop_dict.get("rot_dir", 1.)
+        self._pitch_info = prop_dict.get("pitch_info",{"type":"default"})
+        self._chord_info = prop_dict.get("chord_info",{"type":"default"})
+        self._motor_info = prop_dict.get("electric_motor",{})
+        '''
+        if "airfoils" in prop_dict:
+            airfoils = list(prop_dict["airfoils"].keys())
+
+            if len(airfoils) > 1:
+                self._root_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[0]]["properties"])
+                self._tip_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[1]]["properties"])
+            else:
+                self._root_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[0]]["properties"])
+                self._tip_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[0]]["properties"])
+        else:
+        '''
+        self._root_airfoil = Airfoil()
+        self._tip_airfoil = Airfoil()
+
+    def airfoil(self, name, end="both", **properties):
+        """Update the properties of the root and/or tip airfoils.
+
+        Parameters
+        ----------
+        end
+            Can be set as 'both', 'root', or 'tip' to set both to be
+            the same or modify each individually.
+        name
+            The name of the airfoil.
+
+        **properties
+            All of properties need to specify an Airfoil can be passed
+            in as key word arguments. These include the following:
+            alpha_L0 - zero-lift angle of attack,
+            CL_alpha - The lift coefficient slope,
+            Cm_alpha - The moment coefficient slope,
+            Cm_L0 - The zero-lift coefficient of moment,
+            CD0 - The zero-lift drag,
+            CD0_L - The drag coefficient proportional to lift,
+            CD0_L2 - The drag coefficient proportional to lift squared.
+            CL_max - The max lift coefficient.
+
+        Returns
+        -------
+        Airfoil
+            The newly created Airfoil object.
+        """
+        airfoil = Airfoil(name, properties)
+
+        if end == "both":
+            self._root_airfoil = airfoil
+            self._tip_airfoil = airfoil
+        elif end == "root":
+            self._root_airfoil = airfoil
+        elif end == "tip":
+            self._tip_airfoil = airfoil
+
+        return airfoil
+
+    def get_position(self):
+        """Get the position of the prop.
+
+        Returns
+        -------
+        numpy array
+            array containing the x,y,z position of the propeller.
+
+        """
+        return self._position
+
+    def get_orientation(self):
+        """Get the orientation of the prop.
+
+        Returns
+        -------
+        list
+            list containing elevation angle and heading angle of prop (degrees).
+
+        """
+        return self._orientation
+        
+    def get_number_of_nodes(self):
+        """Get the number of radial analysis nodes along the prop.
+
+        Returns
+        -------
+        int
+            number of radial nodes used for analysis.
+
+        """
+        return self._nodes
+
+    def get_diameter(self):
+        """Get the diameter of the prop.
+
+        Returns
+        -------
+        float
+            diameter of the propeller.
+
+        """
+        return self._diameter
+
+    def get_hub_diameter(self):
+        """Get the diameter of the prop hub.
+
+        Returns
+        -------
+        float
+            diameter of the propeller hub.
+
+        """
+        return self._hub_diameter
+
+    def get_num_of_blades(self):
+        """Get the number of blades on the propeller.
+
+        Returns
+        -------
+        float
+            number of blades on the propeller.
+
+        """
+        return self._blades
+
+    def get_rot_dir(self):
+        """Get the direction of rotation of the prop.
+
+        Returns
+        -------
+        int
+            1 denotes a ccw rotation, -1 denotes a cw rotation.
+
+        """
+        if self._rot_dir == "CCW" or self._rot_dir =="ccw" or self._rot_dir == 1.:
+            return 1.
+        elif self._rot_dir == "CW" or self._rot_dir =="cw" or self._rot_dir == -1.:
+            return -1
+        else: 
+            return 1.
+
+    def get_airfoils(self):
+        """Get the root and tip Airfoil of the propeller.
+
+        Returns
+        -------
+        tuple
+            The root and tip Airfoils of the propeller respectively.
+
+        """
+        return self._root_airfoil, self._tip_airfoil
+
+    def get_pitch_info(self):
+        """Get the pitch info for the prop.
+
+        Returns
+        -------
+        dict
+            The pitch info dictionary.
+
+        """
+        return self._pitch_info
+
+    def get_chord_info(self):
+        """Get the chord info for the prop.
+
+        Returns
+        -------
+        dict
+            The chord info dictionary.
+
+        """
+        return self._chord_info
+
+    def get_motor_info(self):
+        """Get the electric motor info for the prop.
+
+        Returns
+        -------
+        dict
+            Dictionary containing necessary info for electric motor analysis.
+
+        """
+        return self._motor_info
 
 class Airfoil:
     """Defines the aerodynamic properties of an airfoil.
@@ -877,6 +1285,16 @@ class Airfoil:
                 "CD_L": -0.0045,
                 "CD_L2": 0.01
             }
+    def get_name(self):
+        """Get the name of the airfoil.
+
+        Returns
+        -------
+        string
+            The name of the Airfoil.
+
+        """
+        return self.name
 
     def get_lift_slope(self):
         """Get the lift coefficient slope of the Airfoil.
@@ -899,6 +1317,17 @@ class Airfoil:
 
         """
         return self._properties["alpha_L0"]
+
+    def get_max_lift(self):
+        """Get the max lift coefficient of the Airfoil.
+
+        Returns
+        -------
+        float
+            The max lift coefficient of the Airfoil.
+
+        """
+        return self._properties["CL_max"]
 
     def get_moment_slope(self):
         """Get the moment coefficient slope of the Airfoil.

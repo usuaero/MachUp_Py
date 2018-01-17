@@ -21,7 +21,7 @@ class LLModel:
 
     The LLModel implements a modern numerical lifting line algorithm
     that models the aircraft lifting surfaces as a collection of
-    horseshoe vortices. This allows for a solution of the flow field
+    horseshoe vortices. This  allows for a solution of the flow field
     and the corresponding forces and moments to be rapidly obtained.
     For further explanation, please refer to references found below.
 
@@ -36,9 +36,6 @@ class LLModel:
     plane : machup.plane
         Plane object which provides necessary geometry information to
         lifting line algorithm.
-
-    cosine_spacing : bool
-        Passed into LLGrid class to set how the grid spacing is handled.
 
     Returns
     -------
@@ -58,36 +55,35 @@ class LLModel:
     --------
     A simple use case is shown below
 
-    import machup.geometry as geom
-    from machup import LLModel
+    import machup.geometry
+    import machup.models
 
+    filename = "myAirplane.json"
+    myAirplane = machup.geometry.Airplane(inputfile=filename)
+    model = machup.models.LLModel(myAirplane)
 
-    # Generate airplane from file
-    filename = "path/to/file/file_name.json"
-    myPlane = geom.Airplane(inputfile=filename)
-
-    # Generate lifting-line model for airplane
-    myLLModel = LLModel(myPlane)
-
-    # Solve the lifting-line model for the given condition
     controls = {
         "aileron": 10.,
         "elevator": 5.,
+        "rudder": 0.,
+        "flap": 0.,
     }
     aero_state = {
-        "V_mag": 100.,
+        "V_mag": 10.,
         "alpha": 5.,
+        "beta": 0.,
         "rho": 1.
     }
-    results = myLLModel.solve(stype="linear",
-                              control_state=controls,
-                              aero_state=aero_state)
+
+    results = model.solve(stype="linear",
+                          control_state=controls,
+                          aero_state=aero_state)
 
     """
 
     # pylint: disable=too-many-instance-attributes, too-few-public-methods
     def __init__(self, plane, cosine_spacing=True):
-        self._machup_compare = False
+        self._machup_compare = True
         self._num_vortices = plane.get_num_sections()
         self._grid = LLGrid(plane, cosine_spacing)
         self._aero_data = {
@@ -166,10 +162,26 @@ class LLModel:
             if "local_state" in state:
                 v_local[:] = state["local_state"][:, 1:]
                 rho_local[:] = state["local_state"][:, 0]
-                v_mean = np.mean(v_local, axis=0)
-                u_inf[:] = v_mean/np.sqrt(v_mean[0]*v_mean[0] +
-                                          v_mean[1]*v_mean[1] +
-                                          v_mean[2]*v_mean[2])
+                if "V_mag" in state:
+                    alpha = state.get("alpha", 0.)*np.pi/180.
+                    beta = state.get("beta", 0.)*np.pi/180.
+                    c_a = np.cos(alpha)
+                    s_a = np.sin(alpha)
+                    c_b = np.cos(beta)
+                    s_b = np.sin(beta)
+                    v_xyz = np.zeros(3)
+                    v_xyz[:] = state["V_mag"]/np.sqrt(1.-s_a*s_a*s_b*s_b)
+                    v_xyz[0] *= -c_a*c_b
+                    v_xyz[1] *= -c_a*s_b
+                    v_xyz[2] *= -s_a*c_b
+                    u_inf[:] = (v_xyz/np.linalg.norm(v_xyz))
+
+                else:
+                    v_mean = np.mean(v_local, axis=0)
+                    u_inf[:] = v_mean/np.sqrt(v_mean[0]*v_mean[0] +
+                                              v_mean[1]*v_mean[1] +
+                                              v_mean[2]*v_mean[2])
+
             else:
                 if "V_mag" not in state:
                     raise RuntimeError("Must supply 'V_mag' key and value")
@@ -189,6 +201,7 @@ class LLModel:
                 v_local[:] = v_xyz
                 u_inf[:] = (v_xyz/np.linalg.norm(v_xyz))
                 rho_local[:] = state["rho"]
+
 
             if ('roll_rate' in state or
                     'pitch_rate' in state or
@@ -253,13 +266,8 @@ class LLModel:
             Specifies the type of solution. ("linear" or "nonlinear")
         aero_state : dict
             Contains angle of attack, sideslip angle, velocity
-            magnitude, air density, roll rate, pitch rate, and yaw rate.
-            Dictionary keys for these are "alpha", "beta", "v_mag", "rho",
-            roll_rate, pitch_rate, and yaw_rate respectively. Additionaly,
-            in lieu of the previous aerodynamic parameters a local state
-            array containing the local freestream density and velocity at
-            each control point may be passed in through the same dictionary.
-            The key for this array is "local_state". Note that, in both cases,
+            magnitude, and air density. Dictionary keys for these are
+            "alpha", "beta", "v_mag", and "rho" respectively. Note that
             the units on density must be consistent with v_mag and the
             units used in dimensioning the Plane object. For example,
             if the plane dimensions are in feet, than v_mag should be
@@ -278,11 +286,8 @@ class LLModel:
         results : dict
             Python dictionary containing the resulting forces and
             moments about the X, Y, and Z axis in the standard
-            body-fixed coordinate system. Dictionary keys are "FX",
-            "FY", "FZ", "l", "m", and "n" for the total (inviscid and
-            viscous forces) forces and moments. Additionaly, the keys
-            "inviscid" and "viscous" may be used to access the individual
-            contributions.
+            body-fixed coordinate system. Dictionary keys are "FL",
+            "FD", "FS", "FX", "FY", "FZ", "MX", "MY", and "MZ".
 
         Raises
         ------
@@ -304,7 +309,7 @@ class LLModel:
             raise RuntimeError("solver type not yet supported")
 
     def _calc_induced_velocities(self):
-        # Calculates influence of each segement of each horshoe vortex
+        # Calculates influence of each segement of each horseshoe vortex
         # on each control point. See Eq. 1.9.5 in Phillip's text. Note
         # that due to this being a dimensional version, there is no
         # characteristic length used to nondimensionalize the following
@@ -425,17 +430,23 @@ class LLModel:
         v_i = self._v_i
 
         self._forces = rho[:, None]*gamma[:, None]*np.cross(v_i, delta_l)
-        force_total = np.sum(self._forces, axis=0)
 
+        force_total = np.sum(self._forces, axis=0)
+        
+        lift,drag,side = self._rotate_aero_forces(force_total)
+        '''
         drag = np.dot(force_total, u_inf)
         lift = force_total-drag*u_inf
         lift = np.sqrt(lift[0]*lift[0]+lift[1]*lift[1]+lift[2]*lift[2])
-
+        side = 0
+        '''
+        
         self._results["inviscid"]["FX"] = force_total[0]
         self._results["inviscid"]["FY"] = force_total[1]
         self._results["inviscid"]["FZ"] = force_total[2]
         self._results["inviscid"]["FL"] = lift
         self._results["inviscid"]["FD"] = drag
+        self._results["inviscid"]["FS"] = side
 
         # compute parasitic forces
         v_i_mag = np.sqrt(np.einsum('ij,ij->i', v_i, v_i))
@@ -453,17 +464,24 @@ class LLModel:
         self._f_parasite = f_parasite_mag[:, None]*v_i/v_i_mag[:, None]
 
         f_parasite_total = np.sum(self._f_parasite, axis=0)
+
+        lift_p,drag_p,side_p = self._rotate_aero_forces(f_parasite_total)
+        '''
         drag_p = np.dot(f_parasite_total, u_inf)
         lift_p = f_parasite_total - drag_p*u_inf
         lift_p = np.sqrt(lift_p[0]*lift_p[0] +
                          lift_p[1]*lift_p[1] +
                          lift_p[2]*lift_p[2])
+        side_p = 0
+        '''
 
         self._results["viscous"]["FX"] = f_parasite_total[0]
         self._results["viscous"]["FY"] = f_parasite_total[1]
         self._results["viscous"]["FZ"] = f_parasite_total[2]
         self._results["viscous"]["FL"] = lift_p
         self._results["viscous"]["FD"] = drag_p
+        self._results["viscous"]["FS"] = side_p
+
 
         # compute total forces
         self._results["FX"] = force_total[0] + f_parasite_total[0]
@@ -471,6 +489,27 @@ class LLModel:
         self._results["FZ"] = force_total[2] + f_parasite_total[2]
         self._results["FL"] = lift + lift_p
         self._results["FD"] = drag + drag_p
+        self._results["FS"] = side + side_p
+
+    def _rotate_aero_forces(self,F):
+        u_inf = self._aero_data["u_inf"]
+
+        L_xyz = np.cross(u_inf,[0.,1.,0.])
+        L_xyz /= np.linalg.norm(L_xyz)
+        S_xyz = np.cross(L_xyz,u_inf)
+        S_xyz /= np.linalg.norm(S_xyz)
+
+        D = np.dot(F,u_inf)
+        D_vec = D*u_inf
+        
+        L = np.dot(F,L_xyz)
+        L_vec = L*L_xyz
+        
+        S_vec = F-L_vec-D_vec
+
+        S = np.dot(S_vec,S_xyz)
+
+        return L,D,S
 
     def _local_parasitic_drag_coefficient(self):
         # computes the local parasitic drag coefficient based on local
@@ -503,6 +542,8 @@ class LLModel:
             cd = cd0 + cd1*cl + cd2*cl*cl
 
         cd += 0.002 * np.abs(delta_control_surf)*180./np.pi  # rough estimate for flaps
+        self.section_cl = cl
+        self.section_cd = cd
 
         return cd
 
@@ -515,26 +556,26 @@ class LLModel:
         force = self._forces
         int_chord2 = self._grid.get_integral_chord2()
         c_m = self._local_moment_coefficient()
-
+        self.section_cm = c_m
         r_cg = r_cp - cg_location
         self._moments = (-self._dyn_pressures*c_m*int_chord2)[:, None]*u_s
         self._moments += np.cross(r_cg, force)
         moment_total = np.sum(self._moments, axis=0)
 
-        self._results["inviscid"]["l"] = moment_total[0]
-        self._results["inviscid"]["m"] = moment_total[1]
-        self._results["inviscid"]["n"] = moment_total[2]
+        self._results["inviscid"]["MX"] = moment_total[0]
+        self._results["inviscid"]["MY"] = moment_total[1]
+        self._results["inviscid"]["MZ"] = moment_total[2]
 
         moment_parasite = np.cross(r_cg, self._f_parasite)
         moment_total_p = np.sum(moment_parasite, axis=0)
 
-        self._results["viscous"]["l"] = moment_total_p[0]
-        self._results["viscous"]["m"] = moment_total_p[1]
-        self._results["viscous"]["n"] = moment_total_p[2]
+        self._results["viscous"]["MX"] = moment_total_p[0]
+        self._results["viscous"]["MY"] = moment_total_p[1]
+        self._results["viscous"]["MZ"] = moment_total_p[2]
 
-        self._results["l"] = moment_total[0] + moment_total_p[0]
-        self._results["m"] = moment_total[1] + moment_total_p[1]
-        self._results["n"] = moment_total[2] + moment_total_p[2]
+        self._results["MX"] = moment_total[0] + moment_total_p[0]
+        self._results["MY"] = moment_total[1] + moment_total_p[1]
+        self._results["MZ"] = moment_total[2] + moment_total_p[2]
 
     def _local_moment_coefficient(self):
         # computes local moment coefficient based on local velocities
@@ -561,3 +602,42 @@ class LLModel:
             c_m = cm_l0 + cm_a*(alpha - alpha_l0) + delta_c*cm_d
 
         return c_m
+
+    def _distributions(self):
+        distributions = {}
+        distributions["name"] = self._grid.get_wing_names()
+        distributions["control_points"] = self._grid.get_control_point_pos()
+        distributions["chord"] = self._grid.get_chord_length()
+        distributions["twist"] = self._grid.get_twist()
+        distributions["dihedral"] = self._grid.get_dihedral()
+        distributions["sweep"] = self._grid.get_sweep()
+        distributions["area"] = self._grid.get_section_areas()
+        distributions["alpha"] = self._alphas
+        distributions["forces_xyz"] = self._forces
+        distributions["section_CL"] = self.section_cl
+        distributions["section_Cm"] = self.section_cm
+        distributions["section_CD_parasitic"] = self.section_cd
+        distributions["section_alpha_L0"] = self._grid.get_zero_lift_alpha()
+        return distributions
+
+
+    def _find_stall_location(self):
+        cl_max = self._grid.get_max_lifts()
+        stall_location = np.where(self.section_cl>cl_max)
+        if stall_location[0].size>=1:
+            names = self._grid.get_wing_names()
+            spacing_cp = self._grid.get_cp_spacing()
+            point_pos = self._grid.get_control_point_pos()
+
+            stalled_wing = names[stall_location][0]
+
+            if stalled_wing[:5] == 'right':
+                stall_span_loc = spacing_cp[stall_location][0]
+            else:
+                stall_span_loc = 1-spacing_cp[stall_location][0]
+
+            stall_info = {"stalled_wing": stalled_wing,
+                          "span_location": stall_span_loc}
+            return stall_info
+        else:
+            return None

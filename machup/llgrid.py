@@ -20,10 +20,6 @@ class LLGrid:
         Plane object that contains all of the necessary information
         about aircraft geometry.
 
-    cosine_spacing : bool
-        Sets spacing of control points along wing segments as either
-        cosine spacing or linear spacing.
-
     Returns
     -------
     LLGrid
@@ -40,12 +36,14 @@ class LLGrid:
         self._segment_slices = []
         self._uses_cosine_spacing = cosine_spacing
         self._data = {
+            'seg_name': np.empty(self._num_sections,dtype = object),
             'spacing_cp': np.zeros(self._num_sections),
             'spacing_1': np.zeros(self._num_sections),
             'spacing_2': np.zeros(self._num_sections),
             'r': np.zeros((self._num_sections, 3)),
             'r_1': np.zeros((self._num_sections, 3)),
             'r_2': np.zeros((self._num_sections, 3)),
+            'c': np.zeros(self._num_sections),
             'c_1': np.zeros(self._num_sections),
             'c_2': np.zeros(self._num_sections),
             'dS': np.zeros(self._num_sections),
@@ -70,7 +68,13 @@ class LLGrid:
             'CD2': np.zeros(self._num_sections),
             'CD2_left': np.zeros(self._num_sections),
             'CD2_right': np.zeros(self._num_sections),
+            'CL_max': np.zeros(self._num_sections),
+            'CL_max_left': np.zeros(self._num_sections),
+            'CL_max_right': np.zeros(self._num_sections),
             'washout': np.zeros(self._num_sections),
+            'mount_angle': np.zeros(self._num_sections),
+            'dihedral': np.zeros(self._num_sections),
+            'sweep': np.zeros(self._num_sections),
             'u_a': np.zeros((self._num_sections, 3)),
             'u_n': np.zeros((self._num_sections, 3)),
             'u_s': np.zeros((self._num_sections, 3)),
@@ -86,6 +90,7 @@ class LLGrid:
     def _update_data(self):
         # Builds arrays using current wing list
         index = 0
+        self._reference_area = 0.
         slices = self._segment_slices
         for seg in self._wing_segments:
             num_sections = seg.get_num_sections()
@@ -93,14 +98,23 @@ class LLGrid:
             slices.append(cur_slice)
             index += num_sections
 
+            self._set_name(seg,cur_slice)
             self._calc_control_points(seg, cur_slice)
             self._calc_chord(seg, cur_slice)
             self._calc_area(seg, cur_slice)
             self._calc_washout(seg, cur_slice)
+            self._calc_sweep(seg, cur_slice)
+            self._calc_dihedral(seg, cur_slice)
+            self._calc_mount_angle(seg, cur_slice)
             self._calc_unit_vectors(seg, cur_slice)
             self._calc_coefficients(seg, cur_slice)
             self._calc_control_surfaces(seg, cur_slice)
         self._calc_integral_chord2()
+
+    def _set_name(self, seg, seg_slice):
+        #Build array containing wing segment names
+        name = seg.name
+        self._data["seg_name"][seg_slice] = name
 
     def _calc_control_points(self, seg, seg_slice):
         # Builds arrays for the control point and corner positions of
@@ -177,11 +191,14 @@ class LLGrid:
             left_chord = root_chord
             right_chord = tip_chord
 
+        c = self._interp_accross_segment(seg_slice, left_chord, right_chord,
+                                           points="control")
         c_1 = self._interp_accross_segment(seg_slice, left_chord, right_chord,
                                            points="corner_1")
         c_2 = self._interp_accross_segment(seg_slice, left_chord, right_chord,
                                            points="corner_2")
 
+        self._data["c"][seg_slice] = c
         self._data["c_1"][seg_slice] = c_1
         self._data["c_2"][seg_slice] = c_2
 
@@ -210,7 +227,10 @@ class LLGrid:
         sweep = seg.get_sweep()*np.pi/180.
 
         spanwise_l = np.cos(sweep)*(np.linalg.norm(corner_2-corner_1, axis=1))
-        self._data["dS"][seg_slice] = spanwise_l*(chord_1+chord_2)/2.
+        section_area = spanwise_l*(chord_1+chord_2)/2.
+        if seg._is_main:
+            self._reference_area+=np.sum(section_area)
+        self._data["dS"][seg_slice] = section_area
 
     def _calc_washout(self, seg, seg_slice):
         # calculates the linear washout along the wing
@@ -228,6 +248,15 @@ class LLGrid:
                                                right_washout)
 
         self._data["washout"][seg_slice] = washout
+
+    def _calc_sweep(self, seg, seg_slice):
+        self._data["sweep"][seg_slice] = seg.get_sweep()
+
+    def _calc_dihedral(self, seg, seg_slice):
+        self._data["dihedral"][seg_slice] = seg.get_dihedral()
+
+    def _calc_mount_angle(self, seg, seg_slice):
+        self._data["mount_angle"][seg_slice] = seg.get_mounting_angle()
 
     def _calc_unit_vectors(self, seg, seg_slice):
         # Calculates the axial, normal, and spanwise unit vectors for
@@ -273,6 +302,8 @@ class LLGrid:
         cml0_right = right_airfoil.get_zero_lift_moment()
         cd0_left, cd1_left, cd2_left = left_airfoil.get_drag_coefficients()
         cd0_right, cd1_right, cd2_right = right_airfoil.get_drag_coefficients()
+        clmax_left = left_airfoil.get_max_lift()
+        clmax_right = right_airfoil.get_max_lift()
 
         self._data["CL_a"][seg_slice] = self._interp_accross_segment(seg_slice,
                                                                      cla_left,
@@ -315,6 +346,13 @@ class LLGrid:
                                                                     cd2_right)
         self._data["CD2_left"][seg_slice] = cd2_left
         self._data["CD2_right"][seg_slice] = cd2_right
+
+        self._data["CL_max"][seg_slice] = self._interp_accross_segment(seg_slice,
+                                                                       clmax_left,
+                                                                       clmax_right)
+        self._data["CL_max_left"][seg_slice] = clmax_left
+        self._data["CL_max_right"][seg_slice] = clmax_right
+
 
     def _calc_control_surfaces(self, seg, seg_slice):
         # Sets up arrays that describe control surface properties
@@ -385,6 +423,17 @@ class LLGrid:
         """
         return self._plane.get_cg_location()
 
+    def get_wing_names(self):
+        """Get names of wing segments in data array.
+
+        Returns
+        -------
+        numpy array
+            Contains the corresponding names of the wing segments.
+
+        """
+        return self._data["seg_name"]
+
     def get_control_point_pos(self):
         """Get cartesian coordinates of the control points of each vortex.
 
@@ -450,6 +499,17 @@ class LLGrid:
 
         """
         return self._data["CL_a_right"]
+
+    def get_max_lifts(self):
+        """Get linearly interpolated max lift coefficients at each wing section.
+
+        Returns
+        -------
+        numpy array
+            Array of max lift coefficients at each section.
+
+        """
+        return self._data["CL_max"]
 
     def get_drag_coefficients(self):
         """Get airfoil drag coefficients of segment that section lays on.
@@ -546,6 +606,17 @@ class LLGrid:
         """
         return self._data["Cm_L0_right"]
 
+    def get_chord_length(self):
+        """Get linearly interpolated chord length at control point of each wing section.
+
+        Returns
+        -------
+        numpy array
+            Array of chord length at control points.
+
+        """
+        return self._data["c"]
+
     def get_chord_lengths(self):
         """Get linearly interpolated chord lengths of each wing section.
 
@@ -580,6 +651,17 @@ class LLGrid:
 
         """
         return self._data["dS"]
+
+    def get_reference_area(self):
+        """Get planform area of main wings for use as reference area.
+
+        Returns
+        -------
+        float
+            planform area of main wings
+
+        """
+        return self._reference_area
 
     def get_unit_axial_vectors(self):
         """Get unit axial vectors for each wing section.
@@ -659,6 +741,39 @@ class LLGrid:
 
         """
         return self._data["alpha_L0_right"]
+
+    def get_twist(self):
+        """Get the twist at control points for each wing section. It is the summation of the mounting angle and the washout
+
+        Returns
+        -------
+        numpy array
+            Array holding the twist for each section
+
+        """
+        return self._data["mount_angle"]-self._data["washout"]
+
+    def get_sweep(self):
+        """Get the sweep angle for each wing section. 
+
+        Returns
+        -------
+        numpy array
+            Array holding the sweep for each section
+
+        """
+        return self._data["sweep"]
+
+    def get_dihedral(self):
+        """Get the dihedral angle for each wing section. 
+
+        Returns
+        -------
+        numpy array
+            Array holding the dihedral for each section
+
+        """
+        return self._data["dihedral"]
 
     def get_control_mix(self):
         """Get the control surface mixing parameters for each wing section.

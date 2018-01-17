@@ -1,0 +1,254 @@
+{
+	"plane": {
+		"name": "MyAirplane",
+		"CGx": -0.75,
+		"CGy": 0,
+		"CGz": 0
+	},
+	"reference": {
+		"area": 4,
+		"longitudinal_length": 0.8,
+		"lateral_length": 5
+	},
+	"condition": {
+        "units": "English"
+	},
+	"wings": {
+		"Center": {
+			"name": "Center",
+			"ID": 1,
+			"is_main": 1,
+			"side": "both",
+			"connect": {
+				"ID": 0,
+				"location": "tip",
+				"dx": 0,
+				"dy": 0,
+				"dz": 0,
+				"yoffset": 0
+			},
+			"span": 0.5,
+			"sweep": 0,
+			"dihedral": 0,
+			"mounting_angle": 0,
+			"washout": 0,
+			"root_chord": 1,
+			"tip_chord": 1,
+			"airfoils": {
+				"NACA2412": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": -0.036899751,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": -0.0527,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				},
+				"NACA2412": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": -0.036899751,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": -0.0527,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				}
+			},
+			"grid": 40,
+			"control": {},
+			"sameAsRoot": true
+		},
+		"Outer_Wing": {
+			"name": "Outer_Wing",
+			"ID": 2,
+			"is_main": 1,
+			"side": "both",
+			"connect": {
+				"ID": 1,
+				"location": "tip",
+				"dx": 0,
+				"dy": 0,
+				"dz": 0,
+				"yoffset": 0
+			},
+			"span": 2,
+			"sweep": 40,
+			"dihedral": 0,
+			"mounting_angle": 0,
+			"washout": 0,
+			"root_chord": 1,
+			"tip_chord": 0.5,
+			"airfoils": {
+				"NACA2412": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": -0.036899751,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": -0.0527,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				},
+				"NACA2412": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": -0.036899751,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": -0.0527,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				}
+			},
+			"grid": 40,
+			"control": {
+				"has_control_surface": true,
+				"span_root": 0,
+				"span_tip": 1,
+				"chord_root": 0.2,
+				"chord_tip": 0.2,
+				"is_sealed": 1,
+				"mix": {
+					"elevator": 1,
+					"rudder": 0,
+					"aileron": 1,
+					"flap": 0
+				}
+			},
+			"sameAsRoot": true
+		},
+		"Vert_Fin": {
+			"name": "Vert_Fin",
+			"ID": 3,
+			"is_main": 0,
+			"side": "both",
+			"connect": {
+				"ID": 2,
+				"location": "tip",
+				"dx": 0,
+				"dy": 0,
+				"dz": 0,
+				"yoffset": 0
+			},
+			"span": 0.5,
+			"sweep": 30,
+			"dihedral": 90,
+			"mounting_angle": 0,
+			"washout": 0,
+			"root_chord": 0.5,
+			"tip_chord": 0.25,
+			"airfoils": {
+				"NACA0112": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": 0,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": 0,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				},
+				"NACA0112": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": 0,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": 0,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				}
+			},
+			"grid": 40,
+			"control": {},
+			"sameAsRoot": true
+		}
+	},
+	"propellers":{
+		"Main_Prop": {
+			"name": "Main_Prop",
+			"position": {
+				"dx": -0.8,
+				"dy": 0,
+				"dz": 0
+			},
+			"orientation":{
+				"elevation_angle": 0,
+				"heading_angle": 0
+			},
+			"radial_nodes": 100,
+			"diameter": 1.0,
+			"hub_diameter": 0.1,
+			"num_of_blades": 5,
+			"rotation_direction": "CW",
+			"pitch":{
+				"type": "ratio",
+                "value":0.5
+			},
+			"chord":{
+				"type": "linear",
+                "root":0.075,
+                "tip":0.04
+			},
+            "electric_motor":{
+                "has_motor": true,
+                "motor_kv": 1800,
+                "gear_reduction":1,
+                "motor_resistance": 0.422,
+                "motor_no_load_current": 0.2,
+                "battery_resistance": 0.012,
+                "battery_voltage": 11.1,
+                "speed_control_resistance": 0.0014
+            },
+			"airfoils": {
+				"NACA2412": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": -0.0366519143,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": -0.0527,
+						"Cm_alpha": -0.08,
+						"CD0": 0.006,
+						"CD0_L": 0,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				},
+				"NACA0012": {
+					"properties": {
+						"type": "linear",
+						"alpha_L0": 0,
+						"CL_alpha": 6.283185307,
+						"Cm_L0": 0,
+						"Cm_alpha": -0.08,
+						"CD0": 0.0055,
+						"CD0_L": -0.0045,
+						"CD0_L2": 0.01,
+						"CL_max": 1.4
+					}
+				}
+			}
+		}
+    }
+}
+

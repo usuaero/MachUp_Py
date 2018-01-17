@@ -25,19 +25,21 @@ The following code demonstrates how machup might be used in a
 Python script:
 
 ```python
-import machup
+import machup.MU as MU
 
 #Generate a new airplane object
-new_plane = machup.Plane(inputs...)
+new_plane = MU.Airplane(inputs...)
 #Add main wing
 new_plane.addWing(inputs...)
 #Add vertical tail
 new_plane.addWing(inputs...)
 #Add horizontal tail
 new_plane.addWing(inputs...)
+#Add propeller
+new_plane.addProp(inputs...)
 
-#Generate lifting line model for airplane
-myModel = machup.createLLModel(new_plane)
+#Generate MachUp model for airplane
+myModel = MU.MachUp(inputAirplane = new_plane)
 
 #Generate solution and store in results
 results = myModel.solve()
@@ -45,7 +47,7 @@ results = myModel.solve()
 #Access results
 print(results.Lift_Coeff)
 #Save .stl file of airplane for viewing in an stl viewer
-new_plane.saveSTL()
+myModel.create_stl(filename = 'plane.stl')
 ```
 
 ## Features
@@ -54,6 +56,7 @@ new_plane.saveSTL()
 *Fast
 *Incorperates viscous effects
 *Handles multiple lifting surfaces that have sweep, dihedral, and twist
+*Incorporates effects of prop wash on wings
 *Additional libraries available for...
 
 ## Documentation
