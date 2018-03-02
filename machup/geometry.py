@@ -212,7 +212,7 @@ class Airplane:
             root = prop_dict["airfoils"][airfoils[0]]["properties"]
             tip = prop_dict["airfoils"][airfoils[1]]["properties"]
             prop.airfoil(airfoils[0],
-                         "root",
+                         span_position = "root",
                          alpha_L0=root["alpha_L0"],
                          CL_alpha=root["CL_alpha"],
                          Cm_L0=root["Cm_L0"],
@@ -222,7 +222,7 @@ class Airplane:
                          CD0_L2=root["CD0_L2"],
                          CL_max=root["CL_max"])
             prop.airfoil(airfoils[1],
-                         "tip",
+                         span_position = "tip",
                          alpha_L0=tip["alpha_L0"],
                          CL_alpha=tip["CL_alpha"],
                          Cm_L0=tip["Cm_L0"],
@@ -234,7 +234,7 @@ class Airplane:
         else:
             root = prop_dict["airfoils"][airfoils[0]]["properties"]
             prop.airfoil(airfoils[0],
-                         "both",
+                         span_position = None,
                          alpha_L0=root["alpha_L0"],
                          CL_alpha=root["CL_alpha"],
                          Cm_L0=root["Cm_L0"],
@@ -243,7 +243,6 @@ class Airplane:
                          CD0_L=root["CD0_L"],
                          CD0_L2=root["CD0_L2"],
                          CL_max=root["CL_max"])
-        
 
     def get_num_sections(self):
         """Get the total number of sections of all of the wings.
@@ -1055,28 +1054,19 @@ class Prop:
         self._orientation = prop_dict.get("orientation", [0.,0.])
         self._nodes = prop_dict.get("nodes", 100)
         self._diameter = prop_dict.get("diameter", 1.0)
-        self._hub_diameter = prop_dict.get("hub_diameter", 0.1)
+        self._hub_diameter = prop_dict.get("hub_diameter", 0.1*self._diameter)
         self._blades = prop_dict.get("num_of_blades", 2)
         self._rot_dir = prop_dict.get("rot_dir", 1.)
         self._pitch_info = prop_dict.get("pitch_info",{"type":"default"})
         self._chord_info = prop_dict.get("chord_info",{"type":"default"})
         self._motor_info = prop_dict.get("electric_motor",{})
         '''
-        if "airfoils" in prop_dict:
-            airfoils = list(prop_dict["airfoils"].keys())
-
-            if len(airfoils) > 1:
-                self._root_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[0]]["properties"])
-                self._tip_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[1]]["properties"])
-            else:
-                self._root_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[0]]["properties"])
-                self._tip_airfoil = Airfoil(airfoil_data = prop_dict["airfoils"][airfoils[0]]["properties"])
-        else:
-        '''
         self._root_airfoil = Airfoil()
         self._tip_airfoil = Airfoil()
+        '''
+        self._airfoils = {}
 
-    def airfoil(self, name, end="both", **properties):
+    def airfoil(self, name = 'NACA2412', **properties):
         """Update the properties of the root and/or tip airfoils.
 
         Parameters
@@ -1105,14 +1095,17 @@ class Prop:
             The newly created Airfoil object.
         """
         airfoil = Airfoil(name, properties)
+        '''
+        if span_position == "both":
+            self._root_airfoil = airfoil
+            self._tip_airfoil = airfoil
+        elif span_position == "root":
+            self._root_airfoil = airfoil
+        elif span_position == "tip":
+            self._tip_airfoil = airfoil
 
-        if end == "both":
-            self._root_airfoil = airfoil
-            self._tip_airfoil = airfoil
-        elif end == "root":
-            self._root_airfoil = airfoil
-        elif end == "tip":
-            self._tip_airfoil = airfoil
+        '''
+        self._airfoils[name] = airfoil
 
         return airfoil
 
@@ -1207,7 +1200,8 @@ class Prop:
             The root and tip Airfoils of the propeller respectively.
 
         """
-        return self._root_airfoil, self._tip_airfoil
+        #return self._root_airfoil, self._tip_airfoil
+        return self._airfoils
 
     def get_pitch_info(self):
         """Get the pitch info for the prop.
@@ -1265,6 +1259,7 @@ class Airfoil:
         self.name = airfoil_name
         if airfoil_data:
             self._properties = {
+                "span_position": airfoil_data.get("span_position",None),
                 "alpha_L0": airfoil_data["alpha_L0"],
                 "CL_alpha": airfoil_data["CL_alpha"],
                 "CL_max": airfoil_data["CL_max"],
@@ -1276,6 +1271,7 @@ class Airfoil:
             }
         else:
             self._properties = {
+                "span_position": None,
                 "alpha_L0": -0.0369,
                 "CL_alpha": 6.2832,
                 "CL_max": 1.4,
@@ -1295,6 +1291,17 @@ class Airfoil:
 
         """
         return self.name
+
+    def get_span_position(self):
+        """Get the spanwise position of the airfoil.
+
+        Returns
+        -------
+        float
+            The spanwise position of the airfoil. Should be a value from 0 to 1
+
+        """
+        return self._properties["span_position"]
 
     def get_lift_slope(self):
         """Get the lift coefficient slope of the Airfoil.

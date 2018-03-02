@@ -441,12 +441,13 @@ class LLModel:
         side = 0
         '''
         
-        self._results["inviscid"]["FX"] = force_total[0]
-        self._results["inviscid"]["FY"] = force_total[1]
-        self._results["inviscid"]["FZ"] = force_total[2]
         self._results["inviscid"]["FL"] = lift
         self._results["inviscid"]["FD"] = drag
         self._results["inviscid"]["FS"] = side
+        self._results["inviscid"]["FX"] = force_total[0]
+        self._results["inviscid"]["FY"] = force_total[1]
+        self._results["inviscid"]["FZ"] = force_total[2]
+
 
         # compute parasitic forces
         v_i_mag = np.sqrt(np.einsum('ij,ij->i', v_i, v_i))
@@ -474,22 +475,24 @@ class LLModel:
                          lift_p[2]*lift_p[2])
         side_p = 0
         '''
-
-        self._results["viscous"]["FX"] = f_parasite_total[0]
-        self._results["viscous"]["FY"] = f_parasite_total[1]
-        self._results["viscous"]["FZ"] = f_parasite_total[2]
         self._results["viscous"]["FL"] = lift_p
         self._results["viscous"]["FD"] = drag_p
         self._results["viscous"]["FS"] = side_p
+        self._results["viscous"]["FX"] = f_parasite_total[0]
+        self._results["viscous"]["FY"] = f_parasite_total[1]
+        self._results["viscous"]["FZ"] = f_parasite_total[2]
+
 
 
         # compute total forces
-        self._results["FX"] = force_total[0] + f_parasite_total[0]
-        self._results["FY"] = force_total[1] + f_parasite_total[1]
-        self._results["FZ"] = force_total[2] + f_parasite_total[2]
-        self._results["FL"] = lift + lift_p
-        self._results["FD"] = drag + drag_p
-        self._results["FS"] = side + side_p
+        self._results["total"]["FL"] = lift + lift_p
+        self._results["total"]["FD"] = drag + drag_p
+        self._results["total"]["FS"] = side + side_p
+        self._results["total"]["L/D"] = self._results["total"]["FL"]/self._results["total"]["FD"]
+        self._results["total"]["FX"] = force_total[0] + f_parasite_total[0]
+        self._results["total"]["FY"] = force_total[1] + f_parasite_total[1]
+        self._results["total"]["FZ"] = force_total[2] + f_parasite_total[2]
+
 
     def _rotate_aero_forces(self,F):
         u_inf = self._aero_data["u_inf"]
@@ -573,9 +576,9 @@ class LLModel:
         self._results["viscous"]["MY"] = moment_total_p[1]
         self._results["viscous"]["MZ"] = moment_total_p[2]
 
-        self._results["MX"] = moment_total[0] + moment_total_p[0]
-        self._results["MY"] = moment_total[1] + moment_total_p[1]
-        self._results["MZ"] = moment_total[2] + moment_total_p[2]
+        self._results["total"]["MX"] = moment_total[0] + moment_total_p[0]
+        self._results["total"]["MY"] = moment_total[1] + moment_total_p[1]
+        self._results["total"]["MZ"] = moment_total[2] + moment_total_p[2]
 
     def _local_moment_coefficient(self):
         # computes local moment coefficient based on local velocities

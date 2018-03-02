@@ -4,7 +4,7 @@ from machup import PropsSolver
 import machup.outputstl as stl
 
 import numpy as np
-import matplotlib.pyplot as plt
+import json
 
 class MachUp:
     """The MachUp model.
@@ -66,13 +66,14 @@ class MachUp:
         elif inputAirplane:
             self.myairplane = inputAirplane
 
+        wing_control_points = None
         if self.myairplane:
             if self.myairplane._wings:
                 self.myllmodel = LLModel(self.myairplane)
                 self.Sw = self.myllmodel._grid.get_reference_area()
                 self.lat_ref = self.myairplane.get_lat_ref()
                 self.long_ref = self.myairplane.get_long_ref()
-
+                wing_control_points = self.myllmodel._grid.get_control_point_pos()
                 if self.lat_ref is None or self.long_ref is None:
                     print("Reference lengths not given. Assuming following reference lengths:")
 
@@ -95,9 +96,9 @@ class MachUp:
                 
 
             if self.myairplane._props:
-                self.myprops = PropsSolver(self.myairplane)
+                self.myprops = PropsSolver(self.myairplane,wing_control_points)
 
-    def solve(self, aero_state = None, control_state = None, prop_state = None):
+    def solve(self, aero_state = None, control_state = None, prop_state = None,filename = None):
         """Solve the combined propeller and wing models to determine the
         aerodynamic forces for the provided Plane.
 
@@ -128,6 +129,10 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
 
         Returns
         -------
@@ -143,36 +148,44 @@ class MachUp:
             prop_results = {}
             wing_results = {}
             total_results = {}
-            if self.myairplane._props:
-                if self.myairplane._wings:
-                    control_points = self.myllmodel._grid.get_control_point_pos()
-                else: 
-                    control_points = None
-                prop_results,velocity_array = self.myprops.solve(aero_state,prop_state,control_points)
 
+            if self.myairplane._props:
+                prop_results,velocity_array = self.myprops.solve(aero_state,prop_state)
                 if velocity_array is not None:
                     aero_state["local_state"] = velocity_array
 
             if self.myairplane._wings:
                 wing_results = self.myllmodel.solve("linear",aero_state = aero_state,control_state = control_state)
 
-            total_results['FL'] = prop_results.get('FL',0)+wing_results.get('FL',0)
-            total_results['FD'] = prop_results.get('FD',0)+wing_results.get('FD',0)
-            total_results['FS'] = prop_results.get('FS',0)+wing_results.get('FS',0)
+            prop_total = prop_results.get('total',{})
+            wing_total = wing_results.get('total',{})
 
-            total_results['FX'] = prop_results.get('FX',0)+wing_results.get('FX',0)
-            total_results['FY'] = prop_results.get('FY',0)+wing_results.get('FY',0)
-            total_results['FZ'] = prop_results.get('FZ',0)+wing_results.get('FZ',0)
+            total_results['FL'] = prop_total.get('FL',0)+wing_total.get('FL',0)
+            total_results['FD'] = prop_total.get('FD',0)+wing_total.get('FD',0)
+            total_results['FS'] = prop_total.get('FS',0)+wing_total.get('FS',0)
 
-            total_results['MX'] = prop_results.get('MX',0)+wing_results.get('MX',0)
-            total_results['MY'] = prop_results.get('MY',0)+wing_results.get('MY',0)
-            total_results['MZ'] = prop_results.get('MZ',0)+wing_results.get('MZ',0)
+            total_results['FX'] = prop_total.get('FX',0)+wing_total.get('FX',0)
+            total_results['FY'] = prop_total.get('FY',0)+wing_total.get('FY',0)
+            total_results['FZ'] = prop_total.get('FZ',0)+wing_total.get('FZ',0)
+
+            total_results['MX'] = prop_total.get('MX',0)+wing_total.get('MX',0)
+            total_results['MY'] = prop_total.get('MY',0)+wing_total.get('MY',0)
+            total_results['MZ'] = prop_total.get('MZ',0)+wing_total.get('MZ',0)
 
         else:
             aero_state = {"V_mag":10,
                           "rho":0.0023769,
                           "alpha": 0}
             total_results = self.solve(aero_state = aero_state,control_state = control_state, prop_state = prop_state)
+
+        if filename:
+            results = {
+                "wing_results":wing_results,
+                "prop_results":prop_results,
+                "total_results":total_results
+                }
+            with open(filename, 'w') as outfile:
+                json.dump(results, outfile,indent = 4)
 
         return total_results
 
@@ -198,17 +211,14 @@ class MachUp:
                 stl.create_from_grid(llgrid = self.myllmodel._grid,filename = filename)
         elif self.myairplane._props:
             stl.create_from_grid(prop_models = self.myprops.get_prop_models(),filename = filename)
-        
+        print("Geometry output to:",filename)
 
-    def distributions(self,filename = None, aero_state = None, control_state = None, prop_state = None):
+    def distributions(self,aero_state = None, control_state = None, prop_state = None, filename = None):
         """Obtain aerodynamic information about model. Values are returned for each
            section along the wings and propellers.
 
         Parameters
         ----------
-        filename : string
-            Filename for an output .txt file containing all distributions info.
-            If no filename is specified, no output file is created
         aero_state : dict
             Contains angle of attack, sideslip angle, velocity
             magnitude, and air density. Dictionary keys for these are
@@ -234,6 +244,9 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename : string
+            Filename for an output .txt file containing all distributions info.
+            If no filename is specified, no output file is created
 
         Returns
         -------
@@ -262,12 +275,94 @@ class MachUp:
             prop_distributions = {}
 
         if filename:
-            print("Distributions file output not currently supported.")
-            #do stuff to print out distributions info to .txt file
+            wd = wing_distributions
+            pd = prop_distributions
+            wing_header = "Wing Distributions \n{:<16}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}".format(
+                          'Name','ControlPoint(x)','ControlPoint(y)','ControlPoint(z)','Chord','Twist (deg)','Dihedral (deg)','Sweep (deg)',
+                          'Area','Alpha (deg)','Force(x)','Force(y)','Force(z)','Section CL','Section Cm','Section CD Parasitic','Section Alpha_L0',
+                          'Section CL_ref')
+            item_types = [('name','U18'),
+                          ('cpx', 'float'),
+                          ('cpy', 'float'),
+                          ('cpz', 'float'),
+                          ('crd', 'float'),
+                          ('tws', 'float'),
+                          ('dih', 'float'),
+                          ('swp', 'float'),
+                          ('are', 'float'),
+                          ('alp', 'float'),
+                          ('f_x', 'float'),
+                          ('f_y', 'float'),
+                          ('f_z', 'float'),
+                          ('scl', 'float'),
+                          ('scm', 'float'),
+                          ('scd', 'float'),
+                          ('sa0', 'float'),
+                          ('scr', 'float')]
+
+            ab = np.zeros(wd["name"].size,dtype = item_types)
+            ab['name'] = wd["name"]
+            ab['cpx'] = wd["control_points"][:,0]
+            ab['cpy'] = wd["control_points"][:,1]
+            ab['cpz'] = wd["control_points"][:,2]
+            ab['crd'] = wd["chord"]
+            ab['tws'] = wd["twist"]
+            ab['dih'] = wd["dihedral"]
+            ab['swp'] = wd["sweep"]
+            ab['are'] = wd["area"]
+            ab['alp'] = wd["alpha"]
+            ab['f_x'] = wd["forces_xyz"][:,0]
+            ab['f_y'] = wd["forces_xyz"][:,1]
+            ab['f_z'] = wd["forces_xyz"][:,2]
+            ab['scl'] = wd["section_CL"]
+            ab['scm'] = wd["section_Cm"]
+            ab['scd'] = wd["section_CD_parasitic"]
+            ab['sa0'] = wd["section_alpha_L0"]
+            ab['scr'] = wd["section_CL_ref"]
+
+            format_string = "%-18s %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e"
+            np.savetxt(filename,ab,fmt= format_string,header = wing_header)
+
+            distrib_file = open(filename, 'ab')
+
+            prop_header = "\n\nPropeller Distributions \n{:<16}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}".format(
+                          'Name','Radial Position','Chord','Pitch (deg)','Advange Angle (deg)','Induced Angle (deg)',
+                          'Alpha (deg)','Section CL','Section CD','InducedVelocity,Vi','Vi (Axial)','Vi (Tangential)')
+
+            item_types = [('name','U18'),
+                          ('rps', 'float'),
+                          ('crd', 'float'),
+                          ('pit', 'float'),
+                          ('einf', 'float'),
+                          ('ei', 'float'),
+                          ('alp', 'float'),
+                          ('scl', 'float'),
+                          ('scd', 'float'),
+                          ('vi', 'float'),
+                          ('vix', 'float'),
+                          ('vit', 'float')]
+
+            ab = np.zeros(pd["name"].size,dtype = item_types)
+            ab['name'] = pd["name"]
+            ab['rps'] = pd["radial_position"]
+            ab['crd'] = pd["chord"]
+            ab['pit'] = pd["pitch"]
+            ab['einf'] = pd["advance_angle"]
+            ab['ei'] = pd["induced_angle"]
+            ab['alp'] = pd["alpha"]
+            ab['scl'] = pd["section_CL"]
+            ab['scd'] = pd["section_CD"]
+            ab['vi'] = pd["Vi"]
+            ab['vix'] = pd["Vi_x"]
+            ab['vit'] = pd["Vi_t"]
+
+
+            format_string = "%-18s %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e"
+            np.savetxt(distrib_file,ab,fmt= format_string,header = prop_header)
 
         return wing_distributions, prop_distributions
 
-    def find_aero_center(self,aero_state = None, control_state = None, prop_state = None):
+    def find_aero_center(self,aero_state = None, control_state = None, prop_state = None,filename = None):
         """Determine the location of the aerodynamic center for the given state.
 
         Parameters
@@ -297,6 +392,10 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
 
         Returns
         -------
@@ -396,10 +495,18 @@ class MachUp:
                           "rho":0.0023769,
                           "alpha": 0}
             ac_loc = self.find_aero_center(aero_state,control_state,prop_state)
+
+        if filename:
+            results = {
+                "x_ac":ac_loc[0],
+                "z_ac":ac_loc[2]
+                }
+            with open(filename, 'w') as outfile:
+                json.dump(results, outfile,indent = 4)
         return ac_loc
 
 
-    def stall_onset(self,aero_state = None, control_state = None, prop_state = None):
+    def stall_onset(self,aero_state = None, control_state = None, prop_state = None,filename = None):
         """Determine the approximate angle of attack at which the aircraft will stall
            for the given operating conditions.
 
@@ -430,6 +537,11 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
+
 
         Returns
         -------
@@ -457,11 +569,14 @@ class MachUp:
                               "rho":0.0023769,
                               "alpha": 0}
                 stall_info = self.stall_onset(aero_state,control_state,prop_state)
+            if filename:
+                with open(filename, 'w') as outfile:
+                    json.dump(stall_info, outfile,indent = 4)
                 return stall_info
         else:
             raise RuntimeError("Current model does not have wings to stall")
 
-    def stall_airspeed(self, weight, aero_state = None, control_state = None, prop_state = None, error = 10E-10):
+    def stall_airspeed(self, weight, aero_state = None, control_state = None, prop_state = None,filename = None, error = 10E-10):
         """Determine the minimum airspeed at which the aircraft can fly without 
            stalling. Requires that the weight of the aircraft be specified.
 
@@ -495,6 +610,10 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
         error : float
             max acceptable error for the secant method convergence. Default value
             is 10E-10.
@@ -512,8 +631,11 @@ class MachUp:
             x1 = x0*1.5
             aero0["V_mag"] = x0
             aero1["V_mag"] = x1
-            y0 = self.stall_onset(aero0,control_state,prop_state)["lift"]-weight #difference between max lift and weight
-            y1 = self.stall_onset(aero1,control_state,prop_state)["lift"]-weight
+            stall_info0 = self.stall_onset(aero0,control_state,prop_state)
+            stall_info1 = self.stall_onset(aero1,control_state,prop_state)
+
+            y0 = stall_info0["lift"]-weight #difference between max lift and weight
+            y1 = stall_info1["lift"]-weight
 
             while True:
                 #new guess based on secant method
@@ -521,20 +643,28 @@ class MachUp:
                 #if solution has converged, return results
                 if abs(x2-x1)<error:
                     min_airspeed = x2
+
+                    if filename:
+                        stall_airspeed_info = stall_info1.copy()
+                        stall_airspeed_info["airspeed"] = min_airspeed
+                        with open(filename, 'w') as outfile:
+                            json.dump(stall_airspeed_info, outfile,indent = 4)
+
                     return min_airspeed
                 #set variables for next iteration
                 x0=x1
                 y0=y1
                 x1=x2
                 aero1["V_mag"] = x1
-                y1=self.stall_onset(aero1,control_state,prop_state)["lift"]-weight
+                stall_info1 = self.stall_onset(aero1,control_state,prop_state)
+                y1=stall_info1["lift"]-weight
         else:
             aero_state = {"V_mag":10,
                           "rho":0.0023769,
                           "alpha": 0}
             return self.stall_airspeed(self, weight, aero_state, control_state, prop_state)
 
-    def derivatives(self,aero_state = None, control_state = None, prop_state = None):
+    def derivatives(self,aero_state = None, control_state = None, prop_state = None,filename = None):
         """Compute the stability, damping, and control derivatives at given state.
 
         Parameters
@@ -564,6 +694,10 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
 
         Returns
         -------
@@ -574,10 +708,21 @@ class MachUp:
         """
 
         stab_deriv = self.stability_derivatives(aero_state,control_state,prop_state)
+        stab_deriv["static_margin"] = -stab_deriv["Cm_a"]/stab_deriv["CL_a"]
         cont_deriv = self.control_derivatives(aero_state,control_state,prop_state)
         damp_deriv = self.damping_derivatives(aero_state,control_state,prop_state)
         all_derivatives = {**stab_deriv,**cont_deriv,**damp_deriv}
-        all_derivatives["static_margin"] = -all_derivatives["Cm_a"]/all_derivatives["CL_a"]
+
+
+        if filename:
+            results = {
+                "stability_derivatives":stab_deriv,
+                "control_derivatives":cont_deriv,
+                "damping_derivatives":damp_deriv
+                }
+            with open(filename, 'w') as outfile:
+                json.dump(results, outfile,indent = 4)
+
         return all_derivatives
 
 
@@ -899,7 +1044,98 @@ class MachUp:
 
         return cont_deriv
 
-    def pitch_trim(self,L_target,m_target=0.,aero_state = None, control_state = None, prop_state = None, error = 10E-10):
+    def target_lift(self,L_target,aero_state = None, control_state = None, prop_state = None, filename = None, error = 10E-10):
+        """Determine the necessary angle of attack to generate
+           the specified amount of lift.
+
+        Parameters
+        ----------
+        L_target : float
+            Desired lift force to be generated by aircraft
+        aero_state : dict
+            Contains angle of attack, sideslip angle, velocity
+            magnitude, and air density. Dictionary keys for these are
+            "alpha", "beta", "v_mag", and "rho" respectively. Note that
+            the units on density must be consistent with v_mag and the
+            units used in dimensioning the Plane object. For example,
+            if the plane dimensions are in feet, than v_mag should be
+            in ft/s and air density should be in slug/ft^3. If no
+            aero state is specified, than angle of attack and
+            sideslip angle are assumed to be zero and v_mag is assumed
+            to be 10.
+        control_state : dict
+            Contains aileron, elevator, rudder, and flap deflections in
+            degrees. Dictionary keys are "aileron", "elevator",
+            "rudder", and "flap". If no control_state is specified, all control
+            surfaces are assumed to be at zero deflection.
+        prop_state : dict
+            Only necessary if MachUp model has at least one propeller.
+            Contains information for setting state of propeller. This information 
+            can include a rotation rate (in rotations per second), advance ratio, 
+            or braking power. If one is given, the others should not be included 
+            in the dictionary. 
+            Dictionary keys are "J", "rot_per_sec", and
+            "brake_power". If no prop_state is specified, an advance ratio of 
+            J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
+        error : float
+            max acceptable error for the secant method convergence. Default value
+            is 10E-10.
+
+        Returns
+        -------
+        target_state : dict
+            Python dictionary containing the angle of attack (alpha) for
+            the aircraft to generate the specified amount of lift.
+
+        """
+
+        if aero_state:
+            aero0 = aero_state.copy()
+            aero1 = aero_state.copy()
+            x0 = aero0["alpha"] #alpha guess
+            x1 = x0*1.5
+            aero0["alpha"] = x0
+            aero1["alpha"] = x1
+            FM0 = self.solve(aero0,control_state,prop_state)
+            FM1 = self.solve(aero1,control_state,prop_state)
+
+            y0 = FM0["FL"]-L_target #difference between lift and weight
+            y1 = FM1["FL"]-L_target
+
+            while True:
+                #new guess based on secant method
+                x2 = x1-((y1*(x1-x0))/(y1-y0))
+                #if solution has converged, return results
+                if abs(x2-x1)<error:
+                    alpha = x2
+                    target_state = {"alpha":alpha}
+
+                    if filename:
+                        with open(filename, 'w') as outfile:
+                            json.dump(target_state, outfile,indent = 4)
+
+                    return target_state
+                #set variables for next iteration
+                x0=x1
+                y0=y1
+                x1=x2
+                aero1["alpha"] = x1
+                FM1 = self.solve(aero1,control_state,prop_state)
+                y1=fM1["FL"]-L_target
+        else:
+            aero_state = {"V_mag":10,
+                          "rho":0.0023769,
+                          "alpha": 0}
+
+            return self.target_lift(self, L_target, aero_state, control_state, prop_state)
+
+
+
+    def pitch_trim(self,L_target,m_target=0.,aero_state = None, control_state = None, prop_state = None, filename = None, error = 10E-10):
         """Determine the angle of attack and elevator deflection to 
            trim the aircraft in pitch at given airspeed.
 
@@ -935,18 +1171,20 @@ class MachUp:
             Dictionary keys are "J", "rot_per_sec", and
             "brake_power". If no prop_state is specified, an advance ratio of 
             J = 0.5 is assumed.
+        filename: string
+            If a filename is provided, the various results will be 
+            saved to a .json formatted file with this name. Filenames
+            should end with ".json"
         error : float
             max acceptable error for the secant method convergence. Default value
             is 10E-10.
 
         Returns
         -------
-        results : dict
-            Python dictionary containing the resulting forces and
-            moments about the X, Y, and Z axis in the standard
-            body-fixed coordinate system as well as the lift and 
-            drag forces. Dictionary keys are "FL", "FD", "FX",
-            "FY", "FZ", "MX", "MY", and "MZ".
+        trim_state : dict
+            Python dictionary containing the angle of attack (alpha) and
+            elevator deflection to trim the model in pitch for the given
+            conditions.
 
         """
         if aero_state and control_state:
@@ -961,6 +1199,9 @@ class MachUp:
                 if abs(F[0])<error and abs(F[1])<error:
                     trim_state = {"alpha": a,
                                   "elevator": de}
+                    if filename:
+                        with open(filename, 'w') as outfile:
+                            json.dump(trim_state, outfile,indent = 4)
                     return trim_state
                 L_a,L_de = self._lift_slope(aero_state, control_state, prop_state)
                 m_a,m_de = self._moment_slope(aero_state, control_state, prop_state)

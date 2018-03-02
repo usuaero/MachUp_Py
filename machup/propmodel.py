@@ -2,6 +2,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy import integrate
 import math as m
+import matplotlib.pyplot as plt
 
 
 class PropModel:
@@ -19,7 +20,7 @@ class PropModel:
         The newly created PropModel object.
 
     """
-    def __init__(self, prop, cg_location,units):
+    def __init__(self, prop, cg_location,units,wing_points = None):
         self._prop = prop
         self._name = prop.name
         self._position = prop.get_position()
@@ -29,6 +30,10 @@ class PropModel:
         self._calc_pitch()
         self._calc_chord()
         self._calc_motor()
+        self._calc_stall_delay()
+        if wing_points is not None:
+            self._calc_immersed_wing_points(wing_points)
+            self._wing_points = wing_points
         self._init_speed_vars()
         self._cg_location = cg_location
         self._units = units
@@ -52,29 +57,125 @@ class PropModel:
         self._rot_dir = self._prop.get_rot_dir()
 
     def _calc_coefficients(self):
+        '''
         r_airfoil, t_airfoil = self._prop.get_airfoils()
         self._alpha_L0 = self._linearInterp(r_airfoil.get_zero_lift_alpha(),t_airfoil.get_zero_lift_alpha(),self._zeta)
         self._CL_alpha = self._linearInterp(r_airfoil.get_lift_slope(),t_airfoil.get_lift_slope(),self._zeta)
         self._CL_max = self._linearInterp(r_airfoil.get_max_lift(),t_airfoil.get_max_lift(),self._zeta)
-        self._stall_deg = np.degrees(self._CL_max/self._CL_alpha)
+        self._a_stall = self._CL_max/self._CL_alpha
 
         rCD0,rCDL,rCDL2 = r_airfoil.get_drag_coefficients()
         tCD0,tCDL,tCDL2 = t_airfoil.get_drag_coefficients()
         self._CD_0 = self._linearInterp(rCD0,tCD0,self._zeta)
         self._CD_L = self._linearInterp(rCDL,tCDL,self._zeta)
         self._CD_L2 = self._linearInterp(rCDL2,tCDL2,self._zeta)
+        '''
+
+        airfoils = self._prop.get_airfoils()
+        if len(airfoils) == 0:
+            self._prop.airfoil()
+
+        if len(airfoils) == 1:
+            af = list(airfoils.values())[0]
+            span_ordered_list = [(None,af)]
+            self._alpha_L0 = np.full_like(self._zeta,af.get_zero_lift_alpha())
+            self._CL_alpha = np.full_like(self._zeta,af.get_lift_slope())
+            self._CL_max = np.full_like(self._zeta,af.get_max_lift())
+            self._a_stall = self._CL_max/self._CL_alpha
+
+            CD0,CDL,CDL2 = af.get_drag_coefficients()
+            self._CD_0 = np.full_like(self._zeta, CD0)
+            self._CD_L = np.full_like(self._zeta, CDL)
+            self._CD_L2 = np.full_like(self._zeta, CDL2)
+
+        if len(airfoils) > 1:
+            #raise RuntimeError("Multiple airfoils not yet supported")
+            span_wise_list = []
+
+            for af in list(airfoils.values()):
+                span_pos = af.get_span_position()
+                if span_pos == None:
+                    raise RuntimeError("If multiple airfoils are provided, span_position must also be specified")
+                elif span_pos == "root" or span_pos == "Root" or span_pos == "ROOT":
+                    span_pos = self._zeta[0]
+                elif span_pos == "tip" or span_pos == "Tip" or span_pos == "TIP":
+                    span_pos = self._zeta[-1]
+
+                af_tuple = (span_pos,af)
+                span_wise_list.append(af_tuple)
+
+            span_ordered_list = sorted(span_wise_list)
+            loc = []
+            aL0 = []
+            CLa = []
+            CLm = []
+            CD0 = []
+            CD1 = []
+            CD2 = []
+            for airfoil in span_ordered_list:
+                loc.append(airfoil[0])
+                af = airfoil[1]
+                aL0.append(af.get_zero_lift_alpha())
+                CLa.append(af.get_lift_slope())
+                CLm.append(af.get_max_lift())
+                CD_0,CD_L,CD_L2 = af.get_drag_coefficients()
+                CD0.append(CD_0)
+                CD1.append(CD_L)
+                CD2.append(CD_L2)
+            loc = np.array(loc)
+            aL0 = np.array(aL0)
+            CLa = np.array(CLa)
+            CLm = np.array(CLm)
+            CD0 = np.array(CD0)
+            CD1 = np.array(CD1)
+            CD2 = np.array(CD2)
+
+            '''
+            if len(airfoils) == 2:
+                inter_kind = "linear"
+            elif len(airfoils) == 3:
+                inter_kind = "quadratic"
+            elif len(airfoils) > 3:
+                inter_kind = "cubic"
+            '''
+
+            inter_kind = 'linear'
+            aL0_fun = interp1d(loc,aL0,kind=inter_kind,bounds_error = False,fill_value = (aL0[0],aL0[-1]))
+            CLa_fun = interp1d(loc,CLa,kind=inter_kind,bounds_error = False,fill_value = (CLa[0],CLa[-1]))
+            CLm_fun = interp1d(loc,CLm,kind=inter_kind,bounds_error = False,fill_value = (CLm[0],CLm[-1]))
+            CD0_fun = interp1d(loc,CD0,kind=inter_kind,bounds_error = False,fill_value = (CD0[0],CD0[-1]))
+            CD1_fun = interp1d(loc,CD1,kind=inter_kind,bounds_error = False,fill_value = (CD1[0],CD1[-1]))
+            CD2_fun = interp1d(loc,CD2,kind=inter_kind,bounds_error = False,fill_value = (CD2[0],CD2[-1]))
+
+            self._alpha_L0 = aL0_fun(self._zeta)
+            self._CL_alpha = CLa_fun(self._zeta)
+            self._CL_max = CLm_fun(self._zeta)
+            self._a_stall = self._CL_max/self._CL_alpha
+            self._CD_0 = CD0_fun(self._zeta)
+            self._CD_L = CD1_fun(self._zeta)
+            self._CD_L2 = CD2_fun(self._zeta)
+            
+        self._airfoil_span_list = span_ordered_list
 
     def _calc_pitch(self):
         pitch_info = self._prop.get_pitch_info()
-        
+        pitch_increment = pitch_info.get("pitch_increment",None)
         if pitch_info["type"] == "default":
             Kc = 0.5
+        #for propeller info imported from file, pitch should be
+        #given as degrees at radial positions r/R
         elif pitch_info["type"] == "from_file":
             filename = pitch_info["filename"]
             r,p = self._import_data(filename)
             p = np.radians(p)
-            pitch_func = interp1d(r,p,kind='cubic')
-            self._beta = pitch_func(self._zeta)
+            pitch_func = interp1d(r,p,kind='cubic',fill_value = "extrapolate")
+
+            beta_c = pitch_func(self._zeta)
+            l_c = 2*np.pi*self._r*np.tan(beta_c)
+            l = (2*np.pi*self._r)*(l_c-2*np.pi*self._r*np.tan(self._alpha_L0))/(2*np.pi*self._r+l_c*np.tan(self._alpha_L0))
+            self._beta = np.arctan(l/(2*np.pi*self._r))
+            if pitch_increment:
+                self._beta+=np.radians(pitch_increment)
             return
         elif pitch_info["type"] == "ratio":
             Kc = pitch_info["value"]
@@ -82,9 +183,12 @@ class PropModel:
             Kc = pitch_info["value"]/self._d
         else:
             raise RuntimeError("Invalid pitch type")
-
+        
+        # convert chord line pitch (Kc) to aerodynamic pitch (K)
         K = np.pi*self._zeta*((Kc-np.pi*self._zeta*np.tan(self._alpha_L0))/(np.pi*self._zeta+Kc*np.tan(self._alpha_L0)))
         self._beta = np.arctan2(K,np.pi*self._zeta)
+        if pitch_increment:
+            self._beta+=np.radians(pitch_increment)
 
     def _calc_chord(self):
         chord_info = self._prop.get_chord_info()
@@ -92,11 +196,13 @@ class PropModel:
         if chord_info["type"] == "default":
             self._cb = 0.075*self._d*np.sqrt(1-self._zeta**2)
 
+        #for propeller info imported from file, chord length should be
+        #given as c/R at radial positions r/R
         elif chord_info["type"] == "from_file":
             filename = chord_info["filename"]
             r,c = self._import_data(filename)
-            chord_func = interp1d(r,c,kind='cubic')
-            self._cb = chord_func(self._zeta)
+            chord_func = interp1d(r,c,kind='cubic',fill_value = "extrapolate")
+            self._cb = chord_func(self._zeta)*self._d/2.
 
         elif chord_info["type"] == "linear":
             root = chord_info["root"]
@@ -110,6 +216,9 @@ class PropModel:
 
         self._k = self._prop.get_num_of_blades()
         self._chatb = (self._k*self._cb)/self._d
+        self._c_r = self._cb/self._r
+
+
 
     def _calc_motor(self):
         motor_info = self._prop.get_motor_info()
@@ -122,6 +231,63 @@ class PropModel:
             self._Rb = motor_info["battery_resistance"]
             self._Eo = motor_info["battery_voltage"]
             self._Rc = motor_info["speed_control_resistance"]
+
+    def _calc_stall_delay(self):
+
+        #Corrigan stall alpha shift
+        c_r = self._c_r
+        K = (0.1517/c_r)**(1/1.084)
+        sep = K*c_r/0.136
+        n=1
+        self._dA = self._a_stall*((sep**n)-1)
+
+
+        #Viterna's Method Constants
+        #have to set up differenct constants for positive and negative angles of attack
+        #negative angles of attack are treated as positive angles that stall sooner, and then flipped to be negative
+        self._a_stall_neg = self._a_stall+1.5*self._alpha_L0 #approximation for negative stall point. symmetric airfoils have equal stall on both sides.
+        self._CL_max_neg = self._a_stall_neg*self._CL_alpha
+
+        #modified CD at delayed stall
+        self._delay_a_stall = self._a_stall+self._dA
+        self._delay_a_stall_neg = -self._a_stall+self._dA
+        sd_CL = self._delay_a_stall*self._CL_alpha
+        sd_CL_neg = self._delay_a_stall_neg*self._CL_alpha
+
+        self._CD_max = self._CD_0 + self._CD_L*sd_CL + self._CD_L2*sd_CL*sd_CL
+        self._CD_max_neg = self._CD_0 + self._CD_L*sd_CL_neg + self._CD_L2*sd_CL_neg*sd_CL_neg
+
+        CDm = 1.11+0.018*10
+        sas = np.sin(self._a_stall)
+        cas = np.cos(self._a_stall)
+        sasn = np.sin(self._a_stall_neg)
+        casn = np.cos(self._a_stall_neg)
+
+        sdas = np.sin(self._delay_a_stall)
+        cdas = np.cos(self._delay_a_stall)
+        sdasn = np.sin(-self._delay_a_stall_neg)
+        cdasn = np.cos(-self._delay_a_stall_neg)
+
+        self._A1 = CDm/2
+        self._B1 = CDm
+        self._A2 = (self._CL_max-CDm*sas*cas)*sas/(cas*cas)
+        self._B2 = (self._CD_max-CDm*sdas*sdas)/cdas
+
+        self._A2_neg = (self._CL_max_neg-CDm*sasn*casn)*sasn/(casn*casn)
+        self._B2_neg = (self._CD_max_neg-CDm*sdasn*sdasn)/cdasn
+
+    def _calc_immersed_wing_points(self, wing_points):
+        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
+        prop_pos = self._position
+        self._t = np.dot((wing_points-prop_pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
+        stream_vec = self._prop_forward*self._t[:, np.newaxis] #vector down centerline to position of min distance to point
+        P = prop_pos+stream_vec #position on center line of min distance to point
+        center2point_vec = wing_points-P #vector from point to centerline
+        self._center2point_dist = self._vec_mag_mult(center2point_vec) #distance from point to center line
+        tangent = np.cross(self._prop_forward,center2point_vec)
+        self._tangent_norm = tangent/self._vec_mag_mult(tangent)[:,None]
+
+        self._points_in_stream = np.where((abs(self._center2point_dist)<=(self._d/2))&(self._t<0.))
 
     def _init_speed_vars(self):
         self._ei = np.zeros(self._nodes)
@@ -191,6 +357,11 @@ class PropModel:
             self._solve_from_power = False
             self._solve_from_motor = False
 
+        #Du Selig modified tip speed ratio
+        omegaR = self._rot_per_sec*np.pi*self._d
+        self._mtsr = omegaR/np.sqrt(self._Vinf*self._Vinf+omegaR*omegaR)
+
+
     #---------------------------------------Functions for calculating prop performance-----------------------------------------
 
     def _find_coefficients(self):
@@ -207,12 +378,13 @@ class PropModel:
 
         #solve for ei
         self._ei = self._find_ei()
-        self._alpha = self._beta-self._einf-self._ei
 
+        self._alpha = self._beta-self._einf-self._ei
 
         CLift,CLift_a,CDrag = self.get_coefficients_alpha(self._alpha)	
         self._CL = CLift
         self._CD = CDrag
+
 
         cei = np.cos(self._ei)
         ceinf = np.cos(self._einf)
@@ -243,8 +415,10 @@ class PropModel:
         if self._CT<=0.:
             self._efficiency = 0.
 
+        self._find_Vi()
+
     def _find_ei(self,error = 1E-11):
-        window = int(self._zeta.size/7)
+
         x0 = np.copy(self._ei)
         x1 = np.copy(x0)*(1+1e-4)-1e-4
         y0 = self._ei_function(x0)
@@ -256,13 +430,10 @@ class PropModel:
             loc = np.where(abs(y1-y0)>error)
             x2[loc] = x1[loc]-((y1[loc]*(x1[loc]-x0[loc]))/(y1[loc]-y0[loc]))
             i+=1
-
-            x2 = np.where(x2<np.radians(60),x2,0.1)
-            x2 = np.where(x2>np.radians(-30),x2,0.1)
-            ma = self._moving_average(x2,window)
-            ma[:int(window/2)+1] = x2[:int(window/2)+1]
-            ma[-int(window/2):] = x2[-int(window/2):]
-            x2 = np.where(abs(x2-ma)>0.05,ma,x2)
+            x2 = self._correct_ei(x2)
+            if i>50 and loc[0].size<3:
+                #print("Ei convergence issues @ J=",self._J)
+                return x2
             if loc[0].size == 0:
                 return x2
 
@@ -271,16 +442,28 @@ class PropModel:
             y0 = np.copy(y1)
             y1 = self._ei_function(x1)
 
+
     def _ei_function(self,ei):
         alpha = self._beta-self._einf-ei
         CLift = self._get_CL(alpha)
         zero = (self._ei_func_a*CLift)-self._ei_func_b*np.tan(ei)*np.sin(self._einf+ei)
         return zero
 
-    def _moving_average(self,values,window):
-        weights = np.repeat(1.0,window)/window
-        sma = np.convolve(values,weights,'same')
-        return sma
+
+    def _correct_ei(self,ei):
+        correct_sign = np.sign(self._beta-self._einf)
+        ei = np.where(np.absolute(ei)<1.,ei,0.3*correct_sign)
+        ei = np.where(np.sign(ei) != correct_sign, ei*-1, ei)
+        return ei
+
+    def _find_Vi(self):
+        self._Vi = self._rot_per_sec*2*m.pi*self._r*np.sin(self._ei)/np.cos(self._einf)
+        eb = self._ei+self._einf
+        self._Vxi = self._Vi*np.cos(eb)
+        self._Vti = self._Vi*np.sin(eb)
+        self._Vxi_fun = interp1d(self._r,self._Vxi,bounds_error = False, fill_value = (0,0))
+        self._Vti_fun = interp1d(self._r,self._Vti,bounds_error = False, fill_value = (0,0))
+
     #--------------------Functions for finding prop_state based on input power------------------------
     def _prop_state_from_power(self):
         if self._solve_from_motor:
@@ -386,47 +569,34 @@ class PropModel:
         return self._F, self._M
 
 
-    #---------------------------------------Functions for calculating prop slipstream effects on control points-----------------------------------------
+    #---------------------------------------Functions for calculating prop slipstream effects on wing points-----------------------------------------
+    def _calc_prop_wing_vel(self):
+        wing_points = self._wing_points
+        Vx_mag, Vt_mag = self._stone_slipstream(self._points_in_stream)
 
-    def _find_points_in_stream(self,control_points):
-        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
-        prop_pos = self._position
-        self._t = np.dot((control_points-prop_pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
-        stream_vec = self._prop_forward*self._t[:, np.newaxis] #vector down centerline to position of min distance to point
-        P = prop_pos+stream_vec #position on center line of min distance to point
-        center2point_vec = control_points-P #vector from point to centerline
-        self._center2point_dist = self._vec_mag_mult(center2point_vec) #distance from point to center line
-        tangent = np.cross(self._prop_forward,center2point_vec)
-        self._tangent_norm = tangent/self._vec_mag_mult(tangent)[:,None]
-
-        self._points_in_stream = np.where((abs(self._center2point_dist)<(self._d/2))&(self._t<0.))
-
-    def _calc_velocities(self, control_points):
-        Vx_mag, Vt_mag = self._find_slipstream_mult(self._points_in_stream)
-
-        tangential_vel = np.zeros_like(control_points)
-        axial_vel = np.zeros_like(control_points)
+        tangential_vel = np.zeros_like(wing_points)
+        axial_vel = np.zeros_like(wing_points)
         tangential_vel[self._points_in_stream] = self._tangent_norm[self._points_in_stream]*Vt_mag[:,None]
         axial_vel[self._points_in_stream] = -self._prop_forward*Vx_mag[:,None]
         total_vel = tangential_vel+axial_vel
         return total_vel
 
-    def _find_slipstream_mult(self,loc):
+    def _stone_slipstream(self,loc):
         s = -self._t[loc]
-        Vxi,Vti = self._find_Vi()
+        Vxi,Vti = self._Vxi,self._Vti
         if s.size == 0:
             return s,s
 
-        kd = self._find_ss_dev_mult(s)
+        R = self._d/2
+        kd = 1+(s/np.sqrt((s*s)+(R*R)))
+
         r_prime = np.empty([self._r.size,s.size])
-        r_prime[0] = 0.00 #nacelle radius
+        r_prime[0] = self._r[0] #nacelle radius, assume it is constant with hub radius for now
 
         Vx2 = Vxi[1:,None]+Vxi[0:-1,None]
         Kv = (2*self._Vinf+Vx2)/(2*self._Vinf+kd[None,:]*Vx2)
-
         for i in range(1,self._r.size):
             r_prime[i] = np.sqrt((r_prime[i-1]*r_prime[i-1])+((self._r[i]*self._r[i])-(self._r[i-1]*self._r[i-1]))*Kv[i-1])
-
 
         Vxim = Vxi[:,None]*kd
         Vtim = np.empty_like(Vxim)
@@ -444,61 +614,170 @@ class PropModel:
 
         return Vx_point, Vt_point
 
-    def _find_Vi(self):
-        self._Vi = self._rot_per_sec*2*m.pi*self._r*np.sin(self._ei)/np.cos(self._einf)
-        eb = self._ei+self._einf
-        self._Vxi = self._Vi*np.cos(eb)
-        self._Vti = self._Vi*np.sin(eb)
-        return self._Vxi,self._Vti
+    #----------------------------Functions for calculating prop induced velocity at arbitrary control points-----------------------------
 
-    def _find_ss_dev_mult(self,s):
+    def _find_propwash_velocities(self, control_points):
+        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
+        pos = self._position
+        centerline_dist = np.dot((control_points-pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
+        centerline_point = pos+self._prop_forward*centerline_dist[:, np.newaxis]#position on centerline closest to the control point
+        center2point_vec = control_points-centerline_point #shortest vector from control point to centerline
+        r_cp = self._vec_mag_mult(center2point_vec) #distance from center line to control point
+        tangent_vec = np.cross(self._prop_forward,center2point_vec/r_cp[:,None])#direction of tangential velocity
+        stream_loc = np.where((abs(r_cp)<=(self._d/2))&(centerline_dist<0.))#indices of control points that fall within uncontracted propwash cylinder
+
+        #determine velocities at control points within streamtube
+        s = -centerline_dist[stream_loc]
+        Vxi,Vti = self._Vxi,self._Vti
+
+        if s.size == 0:
+            return np.zeros_like(control_points)
+
+
         R = self._d/2
-        return 1+(s/np.sqrt((s*s)+(R*R)))
+        r = self._r
+
+        kd = 1+(s/np.sqrt((s*s)+(R*R)))
+
+        r_prime = np.empty([r.size,s.size])
+        r_prime[0] = r[0] #nacelle radius, assume it is constant with hub radius for now
+
+        Vx2 = Vxi[1:,None]+Vxi[0:-1,None]
+        Kv = (2*self._Vinf+Vx2)/(2*self._Vinf+kd[None,:]*Vx2)
+        for i in range(1,r.size):
+            r_prime[i] = np.sqrt((r_prime[i-1]*r_prime[i-1])+((r[i]*r[i])-(r[i-1]*r[i-1]))*Kv[i-1])
+
+        Vxim = Vxi[:,None]*kd
+        Vtim = np.empty_like(Vxim)
+        Vtim[int(r.size/10):][:] = 2*Vti[int(r.size/10):,None]*r[int(r.size/10):,None]/r_prime[int(r.size/10):][:]
+        Vtim[0:int(r.size/10)][:] = (Vtim[int(r.size/10)][:]/r_prime[int(r.size/10)][:])*r_prime[0:int(r.size/10)][:]
+
+        Vx_point = np.empty_like(s)
+        Vt_point = np.empty_like(s)
+
+        r_cp_in_tube = r_cp[stream_loc]
+
+        for i in range(0,s.size):
+            Vx_point[i] = np.interp(r_cp_in_tube[i],r_prime[:,i],Vxim[:,i], left=0,right=0)
+            Vt_point[i] = np.interp(r_cp_in_tube[i],r_prime[:,i],Vtim[:,i], left=0,right=0)*self._rot_dir
+
+        tangential_vel = np.zeros_like(control_points)
+        axial_vel = np.zeros_like(control_points)
+        tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt_point[:,None]
+        axial_vel[stream_loc] = -self._prop_forward*Vx_point[:,None]
+        total_vel = tangential_vel+axial_vel
+
+        return total_vel
+
+    def _find_propwash_velocities_Epema(self,control_points):
+        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
+        pos = self._position
+        centerline_dist = np.dot((control_points-pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
+        centerline_point = pos+self._prop_forward*centerline_dist[:, np.newaxis]#position on centerline closest to the control point
+        center2point_vec = control_points-centerline_point #shortest vector from control point to centerline
+        r_cp = self._vec_mag_mult(center2point_vec) #distance from center line to control point
+        tangent_vec = np.cross(self._prop_forward,center2point_vec/r_cp[:,None])#direction of tangential velocity
+        stream_loc = np.where((abs(r_cp)<=(self._d/2))&(centerline_dist<0.))#indices of control points that fall within uncontracted propwash cylinder
+
+        #------based on approach and notation set forth by Epema 2017-----------
+        R = self._d/2
+        x = -centerline_dist[stream_loc]
+        r = r_cp[stream_loc]
+        
+        #subterms to calculate a
+        a_1 = (R*R-r*r-x*x)**2
+        a_2 = np.sqrt(a_1+4*R*R*x*x)
+        a_3 = (a_2+R*R-r*r-x*x)/(2*R*R)
+        a = np.sqrt(a_3)
+
+        #axial velocity scaling factor
+        fva_1 = np.arcsin(R/np.sqrt(x*x+R*R))
+        fva = 2+(-a+(x/R)*fva_1)
+
+        #Slipstream contraction ratio
+        J = self._J
+        if J == 0:
+            kd = 1+(x/np.sqrt((x*x)+(R*R)))
+            Contract_ratio = np.sqrt(1/kd)
+        else:
+            Tc = 8*self._CT/np.pi/J/J
+            b = 0.5*(-1+np.sqrt(1+Tc*(8/np.pi)))
+            kd = 1+(x/np.sqrt((x*x)+(R*R)))
+            Contract_ratio = np.sqrt((1+b)/(1+b*kd))
+
+        Vx = self._Vxi_fun(r/Contract_ratio)*fva
+        Vt = self._Vti_fun(r/Contract_ratio)*2
+
+        tangential_vel = np.zeros_like(control_points)
+        axial_vel = np.zeros_like(control_points)
+        tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt[:,None]
+        axial_vel[stream_loc] = -self._prop_forward*Vx[:,None]
+        total_vel = tangential_vel+axial_vel
+
+        return total_vel
 
     #---------------------------------------Functions for calculating lift and drag coefficients-----------------------------------------
 
     def get_coefficients_alpha(self, alpha):
         CL = self._get_CL(alpha)
+        CD = self._get_CD(CL,alpha)
         CL_a = self._get_CL_a(alpha)
-        CD = self._get_CD(CL)
         return CL,CL_a,CD
 
     def _get_CL(self,alpha):
-        neg = np.where(alpha<0.)
-        pos = np.where(alpha>0.)
+
         CL = np.empty_like(alpha)
-        CL[neg] = -self._lift_curve(-alpha,neg)
-        CL[pos] = self._lift_curve(alpha,pos)
+        neg = np.where(alpha<0)
+        pos = np.where(alpha>0)
+
+        #Corrigan Stall Delay
+        a_less_dA_p = alpha[pos]-self._dA[pos]
+        a_less_dA_n = -alpha[neg]-self._dA[neg]
+
+        cap = np.cos(a_less_dA_p)
+        sap = np.sin(a_less_dA_p)
+        can = np.cos(a_less_dA_n)
+        san = np.sin(a_less_dA_n)
+
+        #positive
+        viterna_p = self._A1*np.sin(2*a_less_dA_p)+self._A2[pos]*cap*cap/sap
+        linear_p = self._CL_alpha[pos]*a_less_dA_p
+        step_p = (np.tanh(np.degrees(a_less_dA_p-self._a_stall[pos]))/2+0.5)
+        CL[pos] = np.where(a_less_dA_p<np.radians(2),linear_p,(1-step_p)*linear_p+step_p*viterna_p)
+        CL[pos] += self._CL_alpha[pos]*self._dA[pos]
+        
+        #negative
+        viterna_n = self._A1*np.sin(2*a_less_dA_n)+self._A2_neg[neg]*can*can/san
+        linear_n = self._CL_alpha[neg]*a_less_dA_n
+        step_n = (np.tanh(np.degrees(a_less_dA_n-self._a_stall_neg[neg]))/2+0.5)
+        CL[neg] = -np.where(a_less_dA_n<np.radians(2),linear_n,(1-step_n)*linear_n+step_n*viterna_n)
+        CL[neg]-= self._CL_alpha[neg]*self._dA[neg]
+
         return CL
 
-    def _lift_curve(self,alpha,loc):
-        step = (np.arctan(np.degrees(alpha[loc])-self._stall_deg[loc]-3.0)/np.pi+0.5)
-        linear = self._CL_alpha[loc]*np.sin(alpha[loc])
-        pressure = 2.2*np.sin(alpha[loc])*np.cos(alpha[loc])
-        cL = linear*(1-step)+pressure*step
-        return cL
+    def _get_CD(self,CL,alpha):
+        CD = self._CD_Viterna(CL,alpha)
+        return CD
+
+    def _CD_Viterna(self,CL,alpha):
+        CD = np.empty_like(alpha)
+        ca = np.cos(alpha)
+        sa = np.sin(alpha)
+        pre_stall = np.where((alpha<self._delay_a_stall) & (alpha>self._delay_a_stall_neg))
+        stall_pos = np.where(alpha>self._delay_a_stall)
+        stall_neg = np.where(alpha<self._delay_a_stall_neg)
+        CD[pre_stall] = self._CD_0[pre_stall]+self._CD_L[pre_stall]*CL[pre_stall]+self._CD_L2[pre_stall]*CL[pre_stall]*CL[pre_stall]
+        CD[stall_pos] = self._B1*sa[stall_pos]*sa[stall_pos]+self._B2[stall_pos]*ca[stall_pos]
+        CD[stall_neg] = self._B1*np.sin(-alpha[stall_neg])**2+self._B2_neg[stall_neg]*np.cos(-alpha[stall_neg])
+
+        return CD
 
     def _get_CL_a(self,alpha):
-        neg = np.where(alpha<0.)
-        pos = np.where(alpha>0.)
-        CL_a = np.empty_like(alpha)
-        CL_a[neg] = self._lift_slope_curve(-alpha,neg)
-        CL_a[pos] = self._lift_slope_curve(alpha,pos)
+        da = 0.001
+        CL_forward = self._get_CL(alpha+da)
+        CL_backward =self._get_CL(alpha-da)
+        CL_a = (CL_forward-CL_backward)/2/da
         return CL_a
-
-    def _lift_slope_curve(self,alpha,loc):
-        step = (np.arctan(np.degrees(alpha[loc])-self._stall_deg[loc]-3.0)/np.pi+0.5)
-        linear = self._CL_alpha[loc]*np.sin(alpha[loc])
-        pressure = 2.2*np.sin(alpha[loc])*np.cos(alpha[loc])
-        s_a = (180/(np.pi*np.pi))*(1/(1+(np.degrees(alpha[loc])-self._stall_deg[loc]-3.0)**2))
-        l_a = self._CL_alpha[loc]
-        p_a = 2.2*np.cos(2*alpha[loc])
-
-        cL_a = -linear*s_a+(1-step)*l_a+pressure*s_a+step*p_a
-        return cL_a
-
-    def _get_CD(self,CL):
-        return self._CD_0+self._CD_L*CL+self._CD_L2*CL*CL
 
     #-------------------------------get characteristics functions---------------------------------
 

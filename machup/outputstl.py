@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from numpy import cos as c
 from numpy import sin as s
 from stl import mesh
+from scipy.interpolate import interp1d
 
 
 def create_from_grid(llgrid = None, prop_models = None,filename = None):
@@ -98,7 +99,39 @@ def create_from_grid(llgrid = None, prop_models = None,filename = None):
             num_blades = prop.get_num_blades()
             position = prop.get_position()
             rot_dir = prop.get_rotation_direction()
+            airfoils = prop._airfoil_span_list
 
+            af_loc = []
+            X_list = []
+            Z_list = []
+            for airfoil in airfoils:
+                af_loc.append(airfoil[0])
+                af = airfoil[1]
+                name = af.get_name()
+                if name[:4] == 'NACA' or name[:4] == 'naca':
+                    if len(name) == 8:
+                        NACA = name[4:]
+                else: NACA = '2412'
+                X,Z = plotNACA(NACA,n)
+                X_list.append(X)
+                Z_list.append(Z)
+
+            af_loc = np.array(af_loc)
+            X_array = np.array(X_list)
+            Z_array = np.array(Z_list)
+            if len(airfoils) == 1:
+                X_coords = np.empty((prop._zeta.size,n))
+                Z_coords = np.empty((prop._zeta.size,n))
+                X_coords[:] = X_array
+                Z_coords[:] = Z_array
+            elif len(airfoils)>1:
+                X_fun = interp1d(af_loc,X_array,kind = 'linear',axis =0, bounds_error = False, fill_value = (X_array[0],X_array[-1]))
+                Z_fun = interp1d(af_loc,Z_array,kind = 'linear',axis =0, bounds_error = False, fill_value = (Z_array[0],Z_array[-1]))
+                X_coords = X_fun(prop._zeta)
+                Z_coords = Z_fun(prop._zeta)
+
+
+            '''
             root_airfoil,tip_airfoil = prop_geom.get_airfoils()
 
             root_name = root_airfoil.get_name()
@@ -119,7 +152,7 @@ def create_from_grid(llgrid = None, prop_models = None,filename = None):
             tip_X,tip_Z = plotNACA(tip_NACA,n)
             X_coords = linear_inter(root_X,tip_X,prop._zeta)
             Z_coords = linear_inter(root_Z,tip_Z,prop._zeta)
-            
+            '''
             chord = prop.get_chord()
             X_coords *= chord[:,None]
             Z_coords *= chord[:,None]
