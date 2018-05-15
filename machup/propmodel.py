@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy import integrate
+from scipy.integrate import simps, ode
 import math as m
 import matplotlib.pyplot as plt
+from scipy import optimize as opt
 
 
 class PropModel:
@@ -25,7 +26,7 @@ class PropModel:
         self._name = prop.name
         self._position = prop.get_position()
         self._calc_spacing()
-        self._calc_prop_forward()
+        self._calc_orientation()
         self._calc_coefficients()
         self._calc_pitch()
         self._calc_chord()
@@ -35,6 +36,7 @@ class PropModel:
             self._calc_immersed_wing_points(wing_points)
             self._wing_points = wing_points
         self._init_speed_vars()
+        self._set_slipstream_variables()
         self._cg_location = cg_location
         self._units = units
 
@@ -47,7 +49,7 @@ class PropModel:
         self._zeta = np.linspace(hd/self._d,0.999,self._nodes)
         self._r = self._zeta*self._d*0.5
 
-    def _calc_prop_forward(self):
+    def _calc_orientation(self):
         self._theta,self._gamma = np.radians(self._prop.get_orientation())
         st = m.sin(self._theta)
         ct = m.cos(self._theta)
@@ -55,6 +57,8 @@ class PropModel:
         cg = m.cos(self._gamma)
         self._prop_forward = np.array([ct*cg,ct*sg,-st])
         self._rot_dir = self._prop.get_rot_dir()
+
+        self._slip_dir = -self._prop_forward#indicates direction the slipstream travels. Will be altered later to include slipstream deflection due to high incidence angles
 
     def _calc_coefficients(self):
         '''
@@ -293,6 +297,11 @@ class PropModel:
         self._ei = np.zeros(self._nodes)
         self._rot_per_sec = 15
 
+    def _set_slipstream_variables(self):
+        self._thetaFF = np.arccos(-self._zeta)#theta transform for fourier fit
+        self._bg = 0.114 #stagnant gaussian profile expansion rate
+        self._current_fit = False
+
 
     #---------------------------------------Functions for setting prop operating state-----------------------------------------
     def _set_aero_state(self, aero_state):
@@ -310,11 +319,11 @@ class PropModel:
             v_xyz[2] *= -sa*cb
             self._v_xyz = v_xyz
 
-
             if "V_mag" not in aero_state:
                 raise RuntimeError("Must supply 'V_mag' key and value")
             if "rho" not in aero_state:
                 raise RuntimeError("Must supply 'rho' key and value")
+
             self._rho = aero_state["rho"]
             self._Vinf = aero_state["V_mag"]
         else:
@@ -322,6 +331,8 @@ class PropModel:
             self._rho = 0.0023769
             self._Vinf = 10
             self._v_xyz = np.array([-1,0,0])
+
+        self._Vs = np.dot(self._v_xyz*self._Vinf, self._slip_dir)#component of freestream in direction of slipstream
 
     def _set_prop_state(self, prop_state):
         if prop_state:
@@ -356,11 +367,6 @@ class PropModel:
             self._rot_per_sec = self._Vinf/(self._d*self._J)
             self._solve_from_power = False
             self._solve_from_motor = False
-
-        #Du Selig modified tip speed ratio
-        omegaR = self._rot_per_sec*np.pi*self._d
-        self._mtsr = omegaR/np.sqrt(self._Vinf*self._Vinf+omegaR*omegaR)
-
 
     #---------------------------------------Functions for calculating prop performance-----------------------------------------
 
@@ -404,18 +410,16 @@ class PropModel:
         CN_z = (z2)*self._chatb*(cei2)*(2*teinf*(CDrag*cee+CLift*see)-(teinf2)*(CLift*cee-(CLift_a+CDrag)*see))
         Cn_z = (z3)*self._chatb*(cei2)*(2*teinf*(CLift*cee-CDrag*see)+(teinf2)*((CLift_a+CDrag)*cee+CLift*see))
 
-        self._CT = ((pi2)/4)*integrate.simps(CT_z,self._zeta)
-        self._Cl = ((pi2)/8)*integrate.simps(Cl_z,self._zeta)
-        self._CN_a = ((pi2)/8)*integrate.simps(CN_z,self._zeta)
-        self._Cn_a = ((pi2)/16)*integrate.simps(Cn_z,self._zeta)
+        self._CT = ((pi2)/4)*simps(CT_z,self._zeta)
+        self._Cl = ((pi2)/8)*simps(Cl_z,self._zeta)
+        self._CN_a = ((pi2)/8)*simps(CN_z,self._zeta)
+        self._Cn_a = ((pi2)/16)*simps(Cn_z,self._zeta)
 
         self._CP = self._Cl*2*m.pi
 
         self._efficiency = (self._CT*self._J)/self._CP
         if self._CT<=0.:
             self._efficiency = 0.
-
-        self._find_Vi()
 
     def _find_ei(self,error = 1E-11):
 
@@ -456,13 +460,6 @@ class PropModel:
         ei = np.where(np.sign(ei) != correct_sign, ei*-1, ei)
         return ei
 
-    def _find_Vi(self):
-        self._Vi = self._rot_per_sec*2*m.pi*self._r*np.sin(self._ei)/np.cos(self._einf)
-        eb = self._ei+self._einf
-        self._Vxi = self._Vi*np.cos(eb)
-        self._Vti = self._Vi*np.sin(eb)
-        self._Vxi_fun = interp1d(self._r,self._Vxi,bounds_error = False, fill_value = (0,0))
-        self._Vti_fun = interp1d(self._r,self._Vti,bounds_error = False, fill_value = (0,0))
 
     #--------------------Functions for finding prop_state based on input power------------------------
     def _prop_state_from_power(self):
@@ -548,6 +545,8 @@ class PropModel:
         else:
             self._find_coefficients()
 
+        self._find_Vi()
+
         angle = self._vec_angle(self._prop_forward,-self._v_xyz)
         if angle == 0.:
             N,n=0.,0.
@@ -566,8 +565,49 @@ class PropModel:
                                     self._F[0]*z-self._F[2]*x,
                                     self._F[1]*x-self._F[0]*y])
         self._M = thrust_offset_M+(self._rot_dir*n*N_vec)+self._l*self._prop_forward
-        return self._F, self._M
+        return self._F, self._M,self._T,self._l
 
+
+    #--------------------------------------Functions for prepping Goates Slipstream Model-----------------------
+
+    def _find_Vi(self):
+        self._Vi = self._rot_per_sec*2*m.pi*self._r*np.sin(self._ei)/np.cos(self._einf)
+        eb = self._ei+self._einf
+        self._Vxi = self._Vi*np.cos(eb)
+        self._Vti = self._Vi*np.sin(eb)
+        self._Vxi_fun = interp1d(self._r,self._Vxi,bounds_error = False, fill_value = (0,0))
+        self._Vti_fun = interp1d(self._r,self._Vti,bounds_error = False, fill_value = (0,0))
+        self._current_fit = False
+
+
+    def _find_VxFF(self):
+        AnBn = np.zeros(6)
+        opt_result = opt.minimize(self._fit_error,AnBn,(self._Vxi))
+        AnBn = opt_result.x
+        VxFF = self._fourier(AnBn)
+        VxiFF_fun = interp1d(self._r,VxFF,bounds_error = False, fill_value = 0)
+
+        AnBn.fill(0)
+        opt_result = opt.minimize(self._fit_error,AnBn,(self._Vti))
+        AnBn = opt_result.x
+        VtFF = self._fourier(AnBn)
+        VtiFF_fun = interp1d(self._r,VtFF,bounds_error = False, fill_value = 0)
+        return VxiFF_fun,VtiFF_fun
+
+    def _fourier(self,AnBn):
+        theta = self._thetaFF
+        fit = np.zeros_like(theta)
+        half_size = int(AnBn.size/2)
+        for i in range(half_size):
+            fit+=AnBn[i]*np.sin((i+1)*theta)+AnBn[half_size+i]*np.cos((i+1)*theta)
+            #fit+=AnBn[i]*np.sin((i+1)*np.pi*self._zeta)+AnBn[half_size+i]*np.cos((i+1)*np.pi*self._zeta)
+        return fit
+
+    def _fit_error(self,AnBn,V):
+        fit = self._fourier(AnBn)
+        square = (V-fit)**2
+        RMS = np.sqrt(np.mean(square))
+        return RMS
 
     #---------------------------------------Functions for calculating prop slipstream effects on wing points-----------------------------------------
     def _calc_prop_wing_vel(self):
@@ -577,7 +617,7 @@ class PropModel:
         tangential_vel = np.zeros_like(wing_points)
         axial_vel = np.zeros_like(wing_points)
         tangential_vel[self._points_in_stream] = self._tangent_norm[self._points_in_stream]*Vt_mag[:,None]
-        axial_vel[self._points_in_stream] = -self._prop_forward*Vx_mag[:,None]
+        axial_vel[self._points_in_stream] = self._slip_dir*Vx_mag[:,None]
         total_vel = tangential_vel+axial_vel
         return total_vel
 
@@ -616,7 +656,7 @@ class PropModel:
 
     #----------------------------Functions for calculating prop induced velocity at arbitrary control points-----------------------------
 
-    def _find_propwash_velocities(self, control_points):
+    def _find_propwash_velocities(self, control_points):#Stone's method
         #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
         pos = self._position
         centerline_dist = np.dot((control_points-pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
@@ -664,12 +704,12 @@ class PropModel:
         tangential_vel = np.zeros_like(control_points)
         axial_vel = np.zeros_like(control_points)
         tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt_point[:,None]
-        axial_vel[stream_loc] = -self._prop_forward*Vx_point[:,None]
+        axial_vel[stream_loc] = self._slip_dir*Vx_point[:,None]
         total_vel = tangential_vel+axial_vel
 
         return total_vel
 
-    def _find_propwash_velocities_Epema(self,control_points):
+    def _find_propwash_velocities_Epema(self,control_points):#Epema's method
         #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
         pos = self._position
         centerline_dist = np.dot((control_points-pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
@@ -711,10 +751,513 @@ class PropModel:
         tangential_vel = np.zeros_like(control_points)
         axial_vel = np.zeros_like(control_points)
         tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt[:,None]
-        axial_vel[stream_loc] = -self._prop_forward*Vx[:,None]
+        axial_vel[stream_loc] = self._slip_dir*Vx[:,None]
         total_vel = tangential_vel+axial_vel
 
         return total_vel
+
+    #-------------------Goates method based on Khan approach------------------------------------------
+
+    def _find_propwash_velocities_Goates_Khan(self,control_points):#Goates' method based on Khan approach
+        if self._current_fit == False:
+            self._VxiFF_fun,self._VtiFF_fun = self._find_VxFF()#fourier fit of induced velocity
+            self._current_fit = True
+
+        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
+        pos = self._position
+        centerline_dist = np.dot((control_points-pos),self._slip_dir)#distance down centerline to position of min distance to point. negative is upstream, positive is downstream
+        centerline_point = pos+self._slip_dir*centerline_dist[:, np.newaxis]#position on centerline closest to the control point
+        center2point_vec = control_points-centerline_point #shortest vector from control point to centerline
+        r_cp = self._vec_mag_mult(center2point_vec) #distance from center line to control point
+        tangent_vec = np.cross(self._prop_forward,center2point_vec/r_cp[:,None])#direction of tangential velocity
+        stream_loc = np.where((abs(r_cp)<=(self._d/2+centerline_dist))&(centerline_dist>0.))#indices of control points that fall within uncontracted propwash cylinder
+
+
+        x = centerline_dist[stream_loc]
+        r = r_cp[stream_loc]
+
+        xo = self._d/2#this can change. I just think its a good value to start off with
+        R = self._d/2
+
+        #find outer radius at efflux plane
+        if self._Vs == 0:
+            kd = 1+(xo/np.sqrt((xo*xo)+(R*R)))
+            Con_ratio_o = np.sqrt(1/kd)
+        else:
+            Tc = 8*self._CT/np.pi/self._J/self._J
+            b = 0.5*(-1+np.sqrt(1+Tc*(8/np.pi)))
+            kd = 1+(xo/np.sqrt((xo*xo)+(R*R)))
+            Con_ratio_o = np.sqrt((1+b)/(1+b*kd))
+
+        Ro = R*Con_ratio_o
+
+        #append points along efflux plane to analysis arrays to determine velocity profile @ xo
+        No = 200
+        ro = np.linspace(0,Ro,No)
+        r = np.append(r,ro)
+        x = np.append(x,np.full_like(ro,xo))
+
+        blend_zfa = np.where(x<xo,(x/xo),1)
+
+        if self._Vs == 0:
+            kd = 1+(x/np.sqrt((x*x)+(R*R)))
+            Con_ratio = np.sqrt(1/kd)
+        else:
+            Tc = 8*self._CT/np.pi/self._J/self._J
+            b = 0.5*(-1+np.sqrt(1+Tc*(8/np.pi)))
+            kd = 1+(x/np.sqrt((x*x)+(R*R)))
+            Con_ratio = np.sqrt((1+b)/(1+b*kd))
+
+        #subterms to calculate a
+        a_1 = (R*R-r*r-x*x)**2
+        a_2 = np.sqrt(a_1+4*R*R*x*x)
+        a_3 = (a_2+R*R-r*r-x*x)/(2*R*R)
+        a = np.sqrt(a_3)
+
+        #axial velocity scaling factor
+        fva_1 = np.arcsin(R/np.sqrt(x*x+R*R))
+        fva = 2+(-a+(x/R)*fva_1)
+
+        Vx_ZFA_raw = self._Vxi_fun(r/Con_ratio)*fva
+        Vx_ZFA_FF = self._VxiFF_fun(r/Con_ratio)*fva
+
+        Vt_ZFA_raw = self._Vti_fun(r/Con_ratio)*2
+        Vt_ZFA_FF = self._VtiFF_fun(r/Con_ratio)*2
+
+        #initialize all velocity values to inviscid value
+        Vx = (1-blend_zfa)*Vx_ZFA_raw + blend_zfa*Vx_ZFA_FF+self._Vs #add freestream component in stream direction
+        Vt = (1-blend_zfa)*Vt_ZFA_raw + blend_zfa*Vt_ZFA_FF
+
+        #equivalent jet profile
+        Uo = self._equivalent_jet_GK(Vx[-No:],r[-No:])
+
+        #determine length of ZFE
+        U_ratio = self._Vs/Uo
+        l_zfe = 2*Ro*np.sqrt(1+U_ratio)/np.sqrt(2)/self._bg/(1-U_ratio)
+        zfe_loc = np.where((x<xo+l_zfe) & (x>xo))
+        zef_loc = np.where(x>xo+l_zfe)
+
+        if self._Vs != 0:
+            self._integrate_coflow_GK(Uo,2*r[-1],xo,l_zfe)
+
+        #correct velocities in zone of flow establishment
+        Vx[zfe_loc] = self._find_zfe_GK(x[zfe_loc],r[zfe_loc],Vx[-No:],Vt[-No],r[-No:],Uo,xo,l_zfe)
+        Vx[zef_loc] = self._find_zef_GK(x[zef_loc],r[zef_loc],xo,r[-1],Uo)
+
+        Vx = Vx[:-No]-self._Vs#remove efflux plane points and change to excess(induced) velocity
+        Vt = Vt[:-No]
+
+        tangential_vel = np.zeros_like(control_points)
+        axial_vel = np.zeros_like(control_points)
+        tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt[:,None]
+        axial_vel[stream_loc] = self._slip_dir*Vx[:,None]
+        total_vel = tangential_vel+axial_vel
+
+        return total_vel
+
+    def _integrate_coflow_GK(self,Uo,Do,xo,l_zfe):
+        Meo = Do*Do*np.pi*Uo*(Uo-self._Vs)/4#excess momentum at efflux plane
+        self._l_m = np.sqrt(Meo)/self._Vs#momentum length scale
+        self._B = Do/np.sqrt(1+self._Vs/Uo)#top hat half width at end of ZFE
+
+        #initial conditions for ODE at beginning of ZEF
+        Bs = [self._B/self._l_m]
+        Us = -0.5+np.sqrt(1+4/(np.pi*Bs[-1]*Bs[-1]))/2
+        xs = [(xo+l_zfe)/self._l_m]
+
+        #setup ODE solver
+        f = ode(self._coflow_spread_GK)
+        f.set_integrator('dopri5')
+        f.set_initial_value(Bs[-1],xs[-1])
+
+        #xs step size and max value of iterations
+        dxs = self._d/5/self._l_m
+        iters = 0
+        max_iters = 200
+
+        #step through xs range
+        while f.successful() and iters<max_iters:
+            f.integrate(f.t+dxs)
+            xs.append(f.t)
+            Bs.append(f.y)
+            iters+=1
+
+        Bs = np.array(Bs)
+        xs = np.array(xs)
+
+        x = xs*self._l_m
+
+        #create interpolation function
+        self._Bs_fun = interp1d(x,Bs.flatten(),kind = 'cubic',fill_value = 'extrapolate')
+
+
+    def _coflow_spread_GK(self, xs, Bs):
+        Us = -0.5+np.sqrt(1+4/(np.pi*Bs*Bs))/2
+        dBs = np.sqrt(2)*self._bg*Us/(1+Us)
+        return dBs
+
+    def _find_zfe_GK(self,x,r,Vxo,Vto,ro,Uo,xo,l_zfe):
+        if self._Vs == 0:
+            b = self._bg*(x-xo)
+        else:
+            b_end = self._B/np.sqrt(2)
+            b = b_end*(x-xo)/l_zfe
+
+        Ro = ro[-1]
+        r_integ = np.linspace(0,Ro*10,ro.size*10)
+
+        #determine excess momentum at efflux plane
+        Meo = np.pi*Ro*Ro*Uo*(Uo-self._Vs)
+
+        #setup tophat and raw profiles for blending
+        tophat = np.where(r_integ<=Ro, Uo, self._Vs)
+        profile = np.full_like(r_integ,self._Vs)
+        profile[:ro.size] = Vxo
+
+        #blend tophat and fourier velocity profiles together
+        blend = (x-xo)/l_zfe
+        temp_U = (1-blend[:,None])*profile[None,:]+blend[:,None]*tophat[None,:]
+
+        #determine radius of mixing region start and velocity at that point
+        R_mix = -Ro*(x-xo)/l_zfe+Ro
+        #U_Rmix = np.zeros_like(R_mix)
+        #for i in range(0,R_mix.size):
+        #    U_Rmix[i] = np.interp(R_mix[i],r_integ,temp_U[i])
+
+        U_Rmix_fun = interp1d(r_integ,temp_U,kind = 'linear',axis = 1)
+        U_Rmix = np.diagonal(U_Rmix_fun(R_mix))
+
+        U_mix = (U_Rmix[:,None]-self._Vs)*np.exp(-((r_integ[None,:]-R_mix[:,None])**2)/(b[:,None]*b[:,None]))+self._Vs
+        temp_U = np.where(r_integ[None,:]<R_mix[:,None],temp_U,U_mix)
+
+
+        U = self._conserve_momentum_GK(temp_U,r_integ,Meo,U_Rmix,R_mix,b)
+
+        #interpolate velocity at desired r
+        Vx = np.zeros_like(r)
+        for i in range(0,r.size):
+            Vx[i] = np.interp(r[i],r_integ,U[i])
+
+        return Vx
+
+    def _conserve_momentum_GK(self, temp_U, r_integ, Meo, U_Rmix,R_mix, b,error = 1E-10):
+        #use secant method to determine necessary Vx scaling factor to conserve momentum in modified profile
+        r_full = np.broadcast_to(np.expand_dims(r_integ,0),temp_U.shape)
+        core = np.where(r_full<R_mix[:,None])
+
+        scale0 = np.ones_like(R_mix)
+        scale1 = np.full_like(scale0,1.1)
+        Me0 = self._calc_momentum_zfe_GK(temp_U, r_full, r_integ,R_mix,b,scale0)-Meo
+        Me1 = self._calc_momentum_zfe_GK(temp_U, r_full, r_integ,R_mix,b,scale1)-Meo
+
+        scale2 = np.copy(scale0)
+        i = 0
+        while True:
+            loc = np.where(abs((scale1-scale0)/scale0)>error)
+            scale2[loc] = scale1[loc]-((Me1[loc]*(scale1[loc]-scale0[loc]))/(Me1[loc]-Me0[loc]))
+            i+=1
+            if loc[0].size == 0:
+                break
+            scale0 = np.copy(scale1)
+            scale1 = np.copy(scale2)
+            Me0 = np.copy(Me1)
+            Me1 = self._calc_momentum_zfe_GK(temp_U, r_full, r_integ,R_mix,b,scale1)-Meo
+
+        U = scale2[:,None]*(temp_U-self._Vs)+self._Vs
+
+        return U 
+
+    def _calc_momentum_zfe_GK(self, U, r_full, r_integ, R_mix, b,scale = None):
+        if scale is None:
+            scale = np.ones_like(R_mix)
+        scaled_U = ((U-self._Vs)*scale[:,None])+self._Vs
+
+        U_Rmix_fun = interp1d(r_integ,scaled_U,kind = 'linear',axis = 1)
+        U_Rmix = np.diagonal(U_Rmix_fun(R_mix))
+
+        #determine excess momentum of scaled_U profile
+        Ume = U_Rmix-self._Vs
+
+        Me_mix = np.pi*Ume*Ume*b*(np.sqrt(np.pi)*R_mix*((1/np.sqrt(2))+self._Vs/Ume)+b*(0.5+self._Vs/Ume))#mixing region
+        
+
+        core_U = np.where(r_full<R_mix[:,None],scaled_U,self._Vs)
+        Me_core = 2*np.pi*simps(core_U*(core_U-self._Vs)*r_full,r_full)
+
+        Me_u = Me_mix+Me_core
+
+        return Me_u
+
+    def _find_zef_GK(self,x,r,xo,Ro,Uo):
+        if self._Vs == 0:
+            b = self._bg*(x-xo)
+            Um = Uo*(1/np.sqrt(2)/self._bg)*2*Ro/(x-xo)
+        else:
+            Bs = self._Bs_fun(x)
+            b = Bs*self._l_m/np.sqrt(2)
+            Us = -0.5+np.sqrt(1+4/(np.pi*Bs*Bs))/2
+            dU = Us*self._Vs
+            Um = 2*dU
+
+        Vx = Um*np.exp(-((r/b)**2))+self._Vs
+        return Vx
+
+
+    def _equivalent_jet_GK(self,Vx,ro):
+        Ro = ro[-1]
+        integ = (8/(Ro*Ro))*simps(Vx*(Vx-self._Vs)*ro,ro)
+        root = np.sqrt((self._Vs*self._Vs)+integ)
+        Uo = (self._Vs+root)/2
+        return Uo
+
+    #---------------------------Goates method based on Stone's inviscid approach with viscous------------------
+    #---------------------------corrections based on turbulent jet correlations--------------------------------
+
+    def _find_propwash_velocities_Goates(self,control_points):
+        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
+        pos = self._position
+        centerline_dist = np.dot((control_points-pos),self._slip_dir)#distance down centerline to position of min distance to point. negative is upstream, positive is downstream
+        centerline_point = pos+self._slip_dir*centerline_dist[:, np.newaxis]#position on centerline closest to the control point
+        center2point_vec = control_points-centerline_point #shortest vector from control point to centerline
+        r_cp = self._vec_mag_mult(center2point_vec) #distance from center line to control point
+        tangent_vec = np.cross(self._prop_forward,center2point_vec/r_cp[:,None])#direction of tangential velocity
+        stream_loc = np.where((abs(r_cp)<=(self._d/2+centerline_dist))&(centerline_dist>0.))#indices of control points that fall within uncontracted propwash cylinder
+
+
+        x = centerline_dist[stream_loc]
+        r = r_cp[stream_loc]
+
+        R = self._d/2
+        Vxi = self._Vxi
+        Vti = self._Vti
+        r_prop = self._r
+
+        #excess momentum and equivalent jet in plane of prop
+        Me_prop = 2*np.pi*simps(Vxi*(Vxi+self._Vs)*r_prop, r_prop)
+        Uo_prop = 0.5*(self._Vs+np.sqrt(self._Vs*self._Vs+4*Me_prop/np.pi/R/R))
+
+        #very rough guess for ZFE length based on initial stream
+        xe = self._d*np.sqrt(1+(self._Vs/Uo_prop))/(np.sqrt(2)*self._bg*(1-(self._Vs/Uo_prop)))
+        #control points are created out to 1.5*xe_estimate to provide data points off which to find the real xe
+        N = 100
+        x = np.append(x,np.linspace(0,1.5*xe,N))
+
+        kd = 1+(x/np.sqrt((x*x)+(R*R)))#slipstream development factor 
+
+        r_prime = np.empty([x.size,r_prop.size])
+        r_prime[:,0] = 0.001*self._d#r_prop[0]#nacelle radius, need to address this as it will strongly affect tangential velocity
+
+        Vx2 = Vxi[1:]+Vxi[0:-1]
+
+        Kv = (2*self._Vs+Vx2[None,:])/(2*self._Vs+kd[:,None]*Vx2[None,:])
+        r_prop_2 = r_prop*r_prop
+        for i in range(1,r_prop.size):
+            r_prime[:,i] = np.sqrt((r_prime[:,i-1]*r_prime[:,i-1])+(r_prop_2[i]-r_prop_2[i-1])*Kv[:,i-1])
+
+        Vxim = Vxi[None,:]*kd[:,None]
+        Vtim = Vti*2*(r_prop/r_prime)
+
+        #calculate excess momentum of inviscid slipstream at each x position of control points
+        Mes = np.empty_like(x)
+        for i in range(0,x.size):
+            Mes[i] = 2*np.pi*simps(Vxim[i]*(Vxim[i]+self._Vs)*r_prime[i], r_prime[i])
+
+
+        Rs = r_prime[:,-1]
+        Uo = 0.5*(self._Vs+np.sqrt(self._Vs*self._Vs+4*Mes/np.pi/Rs/Rs))#uniform total jet velocity of equivalent momentum at each x position of control points
+
+        #predict location of end of ZFE and tophat half radius at that location
+        xe,Be = self._find_xe(Mes[-N:],Uo[-N:],x[-N:])
+        Mee = np.interp(xe,x[-N:],Mes[-N:])
+        print(xe)
+
+        #integrate ODE to find development of ZEF if Vs = 0
+        if self._Vs != 0:
+            self._integrate_coflow(xe,Be,Mee)
+
+        #remove additional points used to find xe
+        x = np.delete(x,np.s_[-N:])
+        r_prime = np.delete(r_prime,np.s_[-N:],axis = 0)
+        Vxim = np.delete(Vxim,np.s_[-N:],axis = 0)
+        Vtim = np.delete(Vtim,np.s_[-N:],axis = 0)
+        Rs = np.delete(Rs,np.s_[-N:])
+        Uo = np.delete(Uo,np.s_[-N:])
+        Mes = np.delete(Mes,np.s_[-N:])
+
+        #add viscous effects to ZFE
+        be = Be/np.sqrt(2)#gaussian half width at end of ZFE
+        zfe = np.where(x<xe)
+        zef = np.where(x>xe)
+        b = np.empty_like(x)
+        b[zfe] = be*(x[zfe]/xe)
+        if self._Vs == 0:
+            b[zef] = be+self._bg*(x[zef]-xe)
+        else:
+            Bs = self._Bs_fun(x[zef])
+            b[zef] = Bs*self._l_m/np.sqrt(2)
+
+        Rpc = Rs[zfe]*(1-(x[zfe]/xe))#radius of potential core
+
+        blend = x[zfe]/xe
+
+
+        temp_U = (1-blend[:,None])*(Vxim[zfe]+self._Vs)+(blend*Uo[zfe])[:,None]
+
+        U = self._conserve_momentum(temp_U,r_prime[zfe],Mes[zfe],Rpc,b[zfe])
+
+        U_Rpc = np.empty_like(Rpc)
+        for i in range(Rpc.size):
+            U_Rpc[i] = np.interp(Rpc[i],r_prime[zfe][i],U[i])
+
+        Ume_zfe = U_Rpc-self._Vs
+
+        Vx_zfe = np.zeros_like(r[zfe])
+        #inside potential core
+        for i in range(0,r[zfe].size):
+            center = (1-blend[i])*self._Vs+blend[i]*Uo[i]
+            Vx_zfe[i] = np.interp(r[zfe][i],r_prime[zfe][i],U[i], left=center,right=0)
+        #in mixing region
+        Vx_zfe = np.where(r[zfe]>Rpc, Ume_zfe*np.exp(-((r[zfe]-Rpc)**2)/(b[zfe]*b[zfe]))+self._Vs,Vx_zfe)
+
+        #centerline velocity in ZEF is based on inviscid excess momentum at that point
+        Ume_zef = -self._Vs+np.sqrt(self._Vs*self._Vs+(2*Mes[zef])/(np.pi*b[zef]*b[zef]))
+        Vx_zef = Ume_zef*np.exp(-((r[zef])**2)/(b[zef]*b[zef]))+self._Vs
+
+        Vx = np.empty_like(x)
+        Vx[zfe] = Vx_zfe
+        Vx[zef] = Vx_zef
+        Vx = Vx-self._Vs
+
+        Vt = np.empty_like(x)
+
+        for i in range(0,x.size):
+            Vt[i] = np.interp(r[i],r_prime[i,:],Vtim[i,:], left=0,right=0)*self._rot_dir
+
+        tangential_vel = np.zeros_like(control_points)
+        axial_vel = np.zeros_like(control_points)
+        tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt[:,None]
+        axial_vel[stream_loc] = self._slip_dir*Vx[:,None]
+        total_vel = tangential_vel+axial_vel
+
+        return total_vel
+
+
+    def _find_xe(self, Me,Uo,x):
+        xe0 = 6.2*self._d
+        xe1 = xe0*1.2
+        LHS0,RHS0 = self._xe_imbalance(xe0,Me,Uo,x)
+        LHS1,RHS1 = self._xe_imbalance(xe1,Me,Uo,x)
+        imbal0 = LHS0-RHS0
+        imbal1 = LHS1-RHS1
+
+        while True:
+            xe2 = xe1-((imbal1*(xe1-xe0))/(imbal1-imbal0))
+            if abs(xe2-xe1)<1E-12:
+                return xe2,LHS1
+            xe0=xe1
+            imbal0=imbal1
+            xe1=xe2
+            LHS1,RHS1 = self._xe_imbalance(xe1,Me,Uo,x)
+            imbal1 = LHS1-RHS1
+
+    def _xe_imbalance(self,xe,Me,Uo,x):
+        Me_fun = interp1d(x,Me,kind = 'cubic',fill_value = 'extrapolate')
+        Uo_fun = interp1d(x,Uo,kind = 'cubic',fill_value = 'extrapolate')
+
+        Me_xe = Me_fun(xe)
+        Uo_xe = Uo_fun(xe)
+
+        LHS = 2*np.sqrt(Me_xe/(np.pi*(Uo_xe*Uo_xe-self._Vs*self._Vs)))
+
+        x_ZFE = np.linspace(0,xe,100)
+        Uo_ZFE = Uo_fun(x_ZFE)
+
+        RHS = np.sqrt(2)*self._bg*simps((Uo_ZFE-self._Vs)/(Uo_ZFE+self._Vs),x_ZFE)
+
+        return LHS,RHS
+
+    def _integrate_coflow(self,xe,Be,Mee):#Uo,Do,xo,l_zfe):
+        #Meo = Do*Do*np.pi*Uo*(Uo-self._Vs)/4#excess momentum at efflux plane
+        self._l_m = np.sqrt(Mee)/self._Vs#momentum length scale
+        
+        #initial conditions for ODE at beginning of ZEF
+        Bs = [Be/self._l_m]#initialize list
+        Us = -0.5+np.sqrt(1+4/(np.pi*Bs[-1]*Bs[-1]))/2
+        xs = [xe/self._l_m]
+
+
+        #setup ODE solver
+        f = ode(self._coflow_spread)
+        f.set_integrator('dopri5')
+        f.set_initial_value(Bs[-1],xs[-1])
+
+        #xs step size and max value of iterations
+        dxs = self._d/5/self._l_m
+        iters = 0
+        max_iters = 200
+
+        #step through xs range
+        while f.successful() and iters<max_iters:
+            f.integrate(f.t+dxs)
+            xs.append(f.t)
+            Bs.append(f.y)
+            iters+=1
+
+        Bs = np.array(Bs)
+        xs = np.array(xs)
+
+        x = xs*self._l_m
+
+        #create interpolation function
+        self._Bs_fun = interp1d(x,Bs.flatten(),kind = 'cubic',fill_value = 'extrapolate')
+
+
+    def _coflow_spread(self, xs, Bs):
+        Us = -0.5+np.sqrt(1+4/(np.pi*Bs*Bs))/2
+        dBs = np.sqrt(2)*self._bg*Us/(1+Us)
+        return dBs
+
+    def _conserve_momentum(self, temp_U, r_prime, Mes,Rpc,b,error = 1E-10):
+        scale0 = np.ones_like(Rpc)
+        scale1 = np.full_like(scale0,1.1)
+        Me0 = self._calc_momentum_zfe(temp_U,r_prime,Rpc,b,scale0)-Mes
+        Me1 = self._calc_momentum_zfe(temp_U,r_prime,Rpc,b,scale1)-Mes
+
+        scale2 = np.copy(scale0)
+
+        i = 0
+        while True:
+            loc = np.where(abs((scale1-scale0)/scale0)>error)
+            scale2[loc] = scale1[loc]-((Me1[loc]*(scale1[loc]-scale0[loc]))/(Me1[loc]-Me0[loc]))
+            i+=1
+            if loc[0].size == 0:
+                break
+            scale0 = np.copy(scale1)
+            scale1 = np.copy(scale2)
+            Me0 = np.copy(Me1)
+            Me1 = self._calc_momentum_zfe(temp_U,r_prime,Rpc,b,scale1)-Mes
+
+        U = scale2[:,None]*temp_U
+
+        return U 
+
+    def _calc_momentum_zfe(self,U,r,Rpc,b,scale = None):
+        if scale is None:
+            scale = np.ones_like(Rpc)
+        scaled_U = (U-self._Vs)*scale[:,None] + self._Vs
+
+        U_Rpc = np.empty_like(Rpc)
+        for i in range(Rpc.size):
+            U_Rpc[i] = np.interp(Rpc[i],r[i],scaled_U[i])
+
+        Ume = U_Rpc-self._Vs
+        Me_mix = np.pi*Ume*Ume*b*(np.sqrt(np.pi)*Rpc*((1/np.sqrt(2))+self._Vs/Ume)+b*(0.5+self._Vs/Ume))#mixing region
+        
+        core_U = np.where(r<Rpc[:,None],scaled_U,self._Vs)
+        Me_core = 2*np.pi*simps(core_U*(core_U-self._Vs)*r,r)
+
+        return Me_core+Me_mix
+
 
     #---------------------------------------Functions for calculating lift and drag coefficients-----------------------------------------
 
