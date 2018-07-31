@@ -275,90 +275,99 @@ class MachUp:
             prop_distributions = {}
 
         if filename:
-            wd = wing_distributions
-            pd = prop_distributions
-            wing_header = "Wing Distributions \n{:<16}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}".format(
-                          'Name','ControlPoint(x)','ControlPoint(y)','ControlPoint(z)','Chord','Twist (deg)','Dihedral (deg)','Sweep (deg)',
-                          'Area','Alpha (deg)','Force(x)','Force(y)','Force(z)','Section CL','Section Cm','Section CD Parasitic','Section Alpha_L0',
-                          'Section CL_ref')
-            item_types = [('name','U18'),
-                          ('cpx', 'float'),
-                          ('cpy', 'float'),
-                          ('cpz', 'float'),
-                          ('crd', 'float'),
-                          ('tws', 'float'),
-                          ('dih', 'float'),
-                          ('swp', 'float'),
-                          ('are', 'float'),
-                          ('alp', 'float'),
-                          ('f_x', 'float'),
-                          ('f_y', 'float'),
-                          ('f_z', 'float'),
-                          ('scl', 'float'),
-                          ('scm', 'float'),
-                          ('scd', 'float'),
-                          ('sa0', 'float'),
-                          ('scr', 'float')]
+            if self.myairplane._wings:
+                wd = wing_distributions
+                wing_header = "WingDistributions \n{:<16}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}".format(
+                              'Name','ControlPoint(x)','ControlPoint(y)','ControlPoint(z)','Chord','Twist(deg)','Dihedral(deg)','Sweep(deg)',
+                              'Area','Alpha(deg)','Force(x)','Force(y)','Force(z)','SectionCL','SectionCm','SectionCDParasitic','SectionAlpha_L0',
+                              'SectionCL_ref')
+                item_types = [('name','U18'),
+                              ('cpx', 'float'),
+                              ('cpy', 'float'),
+                              ('cpz', 'float'),
+                              ('crd', 'float'),
+                              ('tws', 'float'),
+                              ('dih', 'float'),
+                              ('swp', 'float'),
+                              ('are', 'float'),
+                              ('alp', 'float'),
+                              ('f_x', 'float'),
+                              ('f_y', 'float'),
+                              ('f_z', 'float'),
+                              ('scl', 'float'),
+                              ('scm', 'float'),
+                              ('scd', 'float'),
+                              ('sa0', 'float'),
+                              ('scr', 'float')]
 
-            ab = np.zeros(wd["name"].size,dtype = item_types)
-            ab['name'] = wd["name"]
-            ab['cpx'] = wd["control_points"][:,0]
-            ab['cpy'] = wd["control_points"][:,1]
-            ab['cpz'] = wd["control_points"][:,2]
-            ab['crd'] = wd["chord"]
-            ab['tws'] = wd["twist"]
-            ab['dih'] = wd["dihedral"]
-            ab['swp'] = wd["sweep"]
-            ab['are'] = wd["area"]
-            ab['alp'] = wd["alpha"]
-            ab['f_x'] = wd["forces_xyz"][:,0]
-            ab['f_y'] = wd["forces_xyz"][:,1]
-            ab['f_z'] = wd["forces_xyz"][:,2]
-            ab['scl'] = wd["section_CL"]
-            ab['scm'] = wd["section_Cm"]
-            ab['scd'] = wd["section_CD_parasitic"]
-            ab['sa0'] = wd["section_alpha_L0"]
-            ab['scr'] = wd["section_CL_ref"]
+                ab = np.zeros(wd["name"].size,dtype = item_types)
+                ab['name'] = wd["name"]
+                ab['cpx'] = wd["control_points"][:,0]
+                ab['cpy'] = wd["control_points"][:,1]
+                ab['cpz'] = wd["control_points"][:,2]
+                ab['crd'] = wd["chord"]
+                ab['tws'] = wd["twist"]
+                ab['dih'] = wd["dihedral"]
+                ab['swp'] = wd["sweep"]
+                ab['are'] = wd["area"]
+                ab['alp'] = wd["alpha"]
+                ab['f_x'] = wd["forces_xyz"][:,0]
+                ab['f_y'] = wd["forces_xyz"][:,1]
+                ab['f_z'] = wd["forces_xyz"][:,2]
+                ab['scl'] = wd["section_CL"]
+                ab['scm'] = wd["section_Cm"]
+                ab['scd'] = wd["section_CD_parasitic"]
+                ab['sa0'] = wd["section_alpha_L0"]
+                ab['scr'] = wd["section_CL_ref"]
 
-            format_string = "%-18s %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e"
-            np.savetxt(filename,ab,fmt= format_string,header = wing_header)
+                format_string = "%-18s %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e"
+                np.savetxt(filename,ab,fmt= format_string,header = wing_header)
 
-            distrib_file = open(filename, 'ab')
+            if self.myairplane._props:
+                distrib_file = open(filename, 'ab')
+                pd = prop_distributions
 
-            prop_header = "\n\nPropeller Distributions \n{:<16}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}".format(
-                          'Name','Radial Position','Chord','Pitch (deg)','Advange Angle (deg)','Induced Angle (deg)',
-                          'Alpha (deg)','Section CL','Section CD','InducedVelocity,Vi','Vi (Axial)','Vi (Tangential)')
+                prop_header = "\n\nPropellerDistributions \n{:<16}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}{:>21}".format(
+                              'Name','RadialPosition','Chord','Pitch(deg)','AdvangeAngle(deg)','InducedAngle(deg)',
+                              'Alpha(deg)','SectionCL','SectionCD','InducedVelocity,Vi','Vi(Axial)','Vi(Tangential)')
 
-            item_types = [('name','U18'),
-                          ('rps', 'float'),
-                          ('crd', 'float'),
-                          ('pit', 'float'),
-                          ('einf', 'float'),
-                          ('ei', 'float'),
-                          ('alp', 'float'),
-                          ('scl', 'float'),
-                          ('scd', 'float'),
-                          ('vi', 'float'),
-                          ('vix', 'float'),
-                          ('vit', 'float')]
+                item_types = [('name','U18'),
+                              ('rps', 'float'),
+                              ('crd', 'float'),
+                              ('pit', 'float'),
+                              ('einf', 'float'),
+                              ('ei', 'float'),
+                              ('alp', 'float'),
+                              ('scl', 'float'),
+                              ('scd', 'float'),
+                              ('vi', 'float'),
+                              ('vix', 'float'),
+                              ('vit', 'float')]
 
-            ab = np.zeros(pd["name"].size,dtype = item_types)
-            ab['name'] = pd["name"]
-            ab['rps'] = pd["radial_position"]
-            ab['crd'] = pd["chord"]
-            ab['pit'] = pd["pitch"]
-            ab['einf'] = pd["advance_angle"]
-            ab['ei'] = pd["induced_angle"]
-            ab['alp'] = pd["alpha"]
-            ab['scl'] = pd["section_CL"]
-            ab['scd'] = pd["section_CD"]
-            ab['vi'] = pd["Vi"]
-            ab['vix'] = pd["Vi_x"]
-            ab['vit'] = pd["Vi_t"]
+                ab = np.zeros(pd["name"].size,dtype = item_types)
+                ab['name'] = pd["name"]
+                ab['rps'] = pd["radial_position"]
+                ab['crd'] = pd["chord"]
+                ab['pit'] = pd["pitch"]
+                ab['einf'] = pd["advance_angle"]
+                ab['ei'] = pd["induced_angle"]
+                ab['alp'] = pd["alpha"]
+                ab['scl'] = pd["section_CL"]
+                ab['scd'] = pd["section_CD"]
+                ab['vi'] = pd["Vi"]
+                ab['vix'] = pd["Vi_x"]
+                ab['vit'] = pd["Vi_t"]
 
 
-            format_string = "%-18s %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e"
-            np.savetxt(distrib_file,ab,fmt= format_string,header = prop_header)
+                format_string = "%-18s %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e %20.12e"
+                np.savetxt(distrib_file,ab,fmt= format_string,header = prop_header)
+            if filename[-4:] == "json":
+                rawtxtfile = open(filename, "r+")
+                data = rawtxtfile.read()
+                data = data.replace("\n", "newline")
+                output = {"data":data}
+                with open(filename, 'w') as outfile:
+                    json.dump(output, outfile,indent = 4)
 
         return wing_distributions, prop_distributions
 
@@ -562,19 +571,24 @@ class MachUp:
                     if stall_info:
                         stall_info["alpha"] = round(a,2)
                         stall_info["lift"] = results["FL"]
-                        return stall_info
+                        break
                     a+=0.1
             else:
                 aero_state = {"V_mag":10,
                               "rho":0.0023769,
                               "alpha": 0}
                 stall_info = self.stall_onset(aero_state,control_state,prop_state)
-            if filename:
-                with open(filename, 'w') as outfile:
-                    json.dump(stall_info, outfile,indent = 4)
-                return stall_info
+
         else:
-            raise RuntimeError("Current model does not have wings to stall")
+            if filename:
+                stall_info = {"error":"unstallable"}
+            else:
+                raise RuntimeError("Current model does not have wings to stall")
+
+        if filename:
+            with open(filename, 'w') as outfile:
+                json.dump(stall_info, outfile,indent = 4)
+        return stall_info
 
     def stall_airspeed(self, weight, aero_state = None, control_state = None, prop_state = None,filename = None, error = 10E-10):
         """Determine the minimum airspeed at which the aircraft can fly without 
@@ -624,45 +638,53 @@ class MachUp:
             Minimum airspeed at which the aircraft can fly without stalling.
 
         """
-        if aero_state:
-            aero0 = aero_state.copy()
-            aero1 = aero_state.copy()
-            x0 = aero0["V_mag"] #airspeed guess
-            x1 = x0*1.5
-            aero0["V_mag"] = x0
-            aero1["V_mag"] = x1
-            stall_info0 = self.stall_onset(aero0,control_state,prop_state)
-            stall_info1 = self.stall_onset(aero1,control_state,prop_state)
+        if self.myairplane._wings:
+            if aero_state:
+                aero0 = aero_state.copy()
+                aero1 = aero_state.copy()
+                x0 = aero0["V_mag"] #airspeed guess
+                x1 = (x0*1.5)+0.1
+                aero0["V_mag"] = x0
+                aero1["V_mag"] = x1
+                stall_info0 = self.stall_onset(aero0,control_state,prop_state)
+                stall_info1 = self.stall_onset(aero1,control_state,prop_state)
 
-            y0 = stall_info0["lift"]-weight #difference between max lift and weight
-            y1 = stall_info1["lift"]-weight
+                y0 = stall_info0["lift"]-weight #difference between max lift and weight
+                y1 = stall_info1["lift"]-weight
 
-            while True:
-                #new guess based on secant method
-                x2 = x1-((y1*(x1-x0))/(y1-y0))
-                #if solution has converged, return results
-                if abs(x2-x1)<error:
-                    min_airspeed = x2
-
-                    if filename:
+                while True:
+                    #new guess based on secant method
+                    x2 = x1-((y1*(x1-x0))/(y1-y0))
+                    #if solution has converged, return results
+                    if abs(x2-x1)<error:
+                        min_airspeed = x2
                         stall_airspeed_info = stall_info1.copy()
                         stall_airspeed_info["airspeed"] = min_airspeed
-                        with open(filename, 'w') as outfile:
-                            json.dump(stall_airspeed_info, outfile,indent = 4)
+                        break
 
-                    return min_airspeed
-                #set variables for next iteration
-                x0=x1
-                y0=y1
-                x1=x2
-                aero1["V_mag"] = x1
-                stall_info1 = self.stall_onset(aero1,control_state,prop_state)
-                y1=stall_info1["lift"]-weight
+                    #set variables for next iteration
+                    x0=x1
+                    y0=y1
+                    x1=x2
+                    aero1["V_mag"] = x1
+                    stall_info1 = self.stall_onset(aero1,control_state,prop_state)
+                    y1=stall_info1["lift"]-weight
+            else:
+                aero_state = {"V_mag":10,
+                              "rho":0.0023769,
+                              "alpha": 0}
+                stall_airspeed_info = self.stall_airspeed(self, weight, aero_state, control_state, prop_state)
         else:
-            aero_state = {"V_mag":10,
-                          "rho":0.0023769,
-                          "alpha": 0}
-            return self.stall_airspeed(self, weight, aero_state, control_state, prop_state)
+            if filename:
+                stall_airspeed_info = {"error":"unstallable"}
+            else:
+                raise RuntimeError("Current model does not have wings to stall")
+
+        if filename:
+            with open(filename, 'w') as outfile:
+                json.dump(stall_airspeed_info, outfile,indent = 4)
+
+        return stall_airspeed_info
 
     def derivatives(self,aero_state = None, control_state = None, prop_state = None,filename = None):
         """Compute the stability, damping, and control derivatives at given state.
@@ -707,23 +729,28 @@ class MachUp:
 
         """
 
-        stab_deriv = self.stability_derivatives(aero_state,control_state,prop_state)
-        stab_deriv["static_margin"] = -stab_deriv["Cm_a"]/stab_deriv["CL_a"]
-        cont_deriv = self.control_derivatives(aero_state,control_state,prop_state)
-        damp_deriv = self.damping_derivatives(aero_state,control_state,prop_state)
-        all_derivatives = {**stab_deriv,**cont_deriv,**damp_deriv}
-
-
-        if filename:
+        if self.myairplane._wings:
+            stab_deriv = self.stability_derivatives(aero_state,control_state,prop_state)
+            stab_deriv["static_margin"] = -stab_deriv["Cm_a"]/stab_deriv["CL_a"]
+            cont_deriv = self.control_derivatives(aero_state,control_state,prop_state)
+            damp_deriv = self.damping_derivatives(aero_state,control_state,prop_state)
             results = {
                 "stability_derivatives":stab_deriv,
                 "control_derivatives":cont_deriv,
                 "damping_derivatives":damp_deriv
                 }
+
+        else:
+            if filename:
+                results = {"error": "underivable"}
+            else:
+                raise RuntimeError("Airplane must have wings to run derivative analysis")
+
+        if filename:
             with open(filename, 'w') as outfile:
                 json.dump(results, outfile,indent = 4)
 
-        return all_derivatives
+        return results
 
 
     def stability_derivatives(self, aero_state = None, control_state = None, prop_state = None):
@@ -1097,7 +1124,7 @@ class MachUp:
             aero0 = aero_state.copy()
             aero1 = aero_state.copy()
             x0 = aero0["alpha"] #alpha guess
-            x1 = x0*1.5
+            x1 = (x0*1.5)+0.1
             aero0["alpha"] = x0
             aero1["alpha"] = x1
             FM0 = self.solve(aero0,control_state,prop_state)
@@ -1106,6 +1133,7 @@ class MachUp:
             y0 = FM0["FL"]-L_target #difference between lift and weight
             y1 = FM1["FL"]-L_target
 
+            iters = 0
             while True:
                 #new guess based on secant method
                 x2 = x1-((y1*(x1-x0))/(y1-y0))
@@ -1113,26 +1141,34 @@ class MachUp:
                 if abs(x2-x1)<error:
                     alpha = x2
                     target_state = {"alpha":alpha}
+                    break
 
-                    if filename:
-                        with open(filename, 'w') as outfile:
-                            json.dump(target_state, outfile,indent = 4)
-
-                    return target_state
                 #set variables for next iteration
                 x0=x1
                 y0=y1
                 x1=x2
                 aero1["alpha"] = x1
                 FM1 = self.solve(aero1,control_state,prop_state)
-                y1=fM1["FL"]-L_target
+                y1=FM1["FL"]-L_target
+                iters += 1
+                if iters>20:
+                    if filename:
+                        target_state = {'error': 'unliftable'}
+                        break
+                    else:
+                        raise RuntimeError('Unable to produce desired lift')
         else:
             aero_state = {"V_mag":10,
                           "rho":0.0023769,
                           "alpha": 0}
 
-            return self.target_lift(self, L_target, aero_state, control_state, prop_state)
+            target_state = self.target_lift(L_target, aero_state, control_state, prop_state)
 
+        if filename:
+            with open(filename, 'w') as outfile:
+                json.dump(target_state, outfile,indent = 4)
+
+        return target_state
 
 
     def pitch_trim(self,L_target,m_target=0.,aero_state = None, control_state = None, prop_state = None, filename = None, error = 10E-10):
@@ -1205,6 +1241,15 @@ class MachUp:
                     return trim_state
                 L_a,L_de = self._lift_slope(aero_state, control_state, prop_state)
                 m_a,m_de = self._moment_slope(aero_state, control_state, prop_state)
+                if L_de == 0 and m_de == 0:
+                    if filename:
+                        trim_state = {'error':'no_elevator'}
+                        with open(filename, 'w') as outfile:
+                            json.dump(trim_state, outfile,indent = 4)
+                        break
+                    else:
+                        raise RuntimeError("Unable to trim aircraft because there is no elevator.")
+
                 J = np.array([[L_a, L_de],
                               [m_a, m_de]])
                 Ji = np.linalg.inv(J)
@@ -1212,8 +1257,14 @@ class MachUp:
                 a += dP[0]
                 de += dP[1]
                 iters+=1
-                if iters>200:
-                    raise RuntimeError("Unable to trim aircraft. Consider increasing elevator size or moving center of gravity")
+                if iters>100:
+                    if filename:
+                        trim_state = {'error':'untrimmable'}
+                        with open(filename, 'w') as outfile:
+                            json.dump(trim_state, outfile,indent = 4)
+                        break
+                    else:
+                        raise RuntimeError("Unable to trim aircraft. Consider increasing elevator size or moving center of gravity")
 
         elif aero_state:
             control_state = {"aileron":0.,

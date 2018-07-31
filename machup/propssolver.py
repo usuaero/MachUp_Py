@@ -70,13 +70,11 @@ class PropsSolver:
     def _calc_forces(self,aero_state = None,prop_state = None):
         self._F = np.zeros(3)
         self._M = np.zeros(3)
-        if aero_state:
-            a = m.radians(aero_state.get("alpha",0.))
-        else:
-            a = 0.
+
         self._results = {
             "total":{}
             }
+
         for prop in self._prop_models:
             #check for individual propeller controls
             if prop_state:
@@ -90,7 +88,7 @@ class PropsSolver:
             pm = self._prop_models[prop]
             pm._set_aero_state(aero_state)
             pm._set_prop_state(local_prop_state)
-            F,M = pm._calc_forces()
+            F,M,T,l = pm._calc_forces()
             self._F += F
             self._M += M
 
@@ -105,6 +103,8 @@ class PropsSolver:
         self._results["total"]['MX'] = self._M[0]
         self._results["total"]['MY'] = self._M[1]
         self._results["total"]['MZ'] = self._M[2]
+        self._results["total"]['Thrust'] = T
+        self._results["total"]['Torque'] = l
 
         return self._results
 
