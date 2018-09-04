@@ -1,10 +1,5 @@
 # MachUp
-NOTE: This readme represents the vision for the final product and as
-such, does not necessarily represent what is currently implemented. For
-documentation on what is currently implemented, see the docstrings.
-
-
-Machup is a Python (2.? - 3.?) library for the design and analysis of 
+Machup is a Python 3 library for the design and analysis of 
 fixed-wing aircraft. This includes things like calculating lift, 
 drag, pitching moments, and stability derivatives. 
 
@@ -25,55 +20,83 @@ The following code demonstrates how machup might be used in a
 Python script:
 
 ```python
-import machup
+import machup.geometry as geom
+from machup import LLModel
 
-#Generate a new airplane object
-new_plane = machup.Plane(inputs...)
-#Add main wing
-new_plane.addWing(inputs...)
-#Add vertical tail
-new_plane.addWing(inputs...)
-#Add horizontal tail
-new_plane.addWing(inputs...)
 
-#Generate lifting line model for airplane
-myModel = machup.createLLModel(new_plane)
+myplane = geom.Airplane()
+myplane.cg_location(-0.29, 0., 0.25)
 
-#Generate solution and store in results
-results = myModel.solve()
+# add main wing and aileron control surface
+mainwing = myplane.add_wing("main_wing",
+                            position=[0., 0., 0.],
+                            semispan=4.,
+                            root_chord=1.,
+                            tip_chord=0.5,
+                            dihedral=3.)
 
-#Access results
-print(results.Lift_Coeff)
-#Save .stl file of airplane for viewing in an stl viewer
-new_plane.saveSTL()
+mainwing.airfoil("NACA2412",
+                 alpha_L0=-0.036899751,
+                 CL_alpha=6.283185307,
+                 Cm_L0=-0.0527,
+                 Cm_alpha=-0.08,
+                 CD0=0.0055,
+                 CD0_L=-0.0045,
+                 CD0_L2=0.01,
+                 CL_max=1.4)
+
+mainwing.control_surface(percent_span=(0.4, 0.9),
+                         percent_chord=0.25,
+                         mix={"aileron": 1.})
+
+# generate lifting-line model for airplane
+myllmodel = LLModel(myplane)
+
+# solve the lifting-line model for the given condition
+controls = {
+    "aileron": 5.,
+}
+aero_state = {
+    "V_mag": 65.,
+    "alpha": 5.,
+    "rho": 1.225
+}
+results = myllmodel.solve(stype="linear",
+                          control_state=controls,
+                          aero_state=aero_state)
+
+print("Lift", results["FL"])
+print("Drag", results["FD"])
+print("Rolling Moment", results["l"])
+print("Pitch Moment", results["m"])
+print("Yaw Moment", results["n"])
 ```
 
 ## Features
 
-*Easy user interface
-*Fast
-*Incorperates viscous effects
-*Handles multiple lifting surfaces that have sweep, dihedral, and twist
-*Additional libraries available for...
+* Easy to couple with other python codes (flight simulators, optimization tools, etc...)
+* Fast
+* Incorperates viscous effects
+* Handles multiple lifting surfaces that have sweep, dihedral, and twist
 
 ## Documentation
 
-Documentation can be found at [machup.readthedocs.io](machup.readthedocs.io)
-or by using the built in Python help() function to consult the docstrings. 
+Refer to docstrings for documentation of public methods.
 
 ## Installation
 
-Once finished, machup packages will be available on PyPi and Conda and can be installed 
-using the following commands respectively. 
+Once the package is cloned or downloaded, it can be installed by running one of the
+following commands in the base directory of the package.
 
-'pip install machup'
+`pip install .'
 
-'conda install machup'
+or
+
+`python setup.py install`
 
 ### Prerequisites
 
-* Python version (2.? - 3.?)
-* Scipy/Numpy version (2.? - 3.?)
+* Numpy 1.15.1 (at least, that is what it has been tested with)
 
 ### Getting the Source Code
 
@@ -103,8 +126,8 @@ Unit tests are implemented using the pytest module and are run using the followi
 
 'python3 -m pytest test/'
 
-##Support
+## Support
 Contact doug.hunsaker@usu.edu with any questions.
 
-##License
-This project is licensed under the ??? license. See LICENSE file for more information. 
+## License
+This project is licensed under the MIT license. See LICENSE file for more information.
