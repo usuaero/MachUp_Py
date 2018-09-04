@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.integrate import simps, ode
+from scipy.integrate import simps, ode,trapz
 import math as m
 import matplotlib.pyplot as plt
 from scipy import optimize as opt
@@ -44,9 +44,9 @@ class PropModel:
 
     def _calc_spacing(self):
         self._d = self._prop.get_diameter()
-        hd = self._prop.get_hub_diameter()
+        self._hd = self._prop.get_hub_diameter()
         self._nodes = self._prop.get_number_of_nodes()
-        self._zeta = np.linspace(hd/self._d,0.999,self._nodes)
+        self._zeta = np.linspace(self._hd/self._d,0.999,self._nodes)
         self._r = self._zeta*self._d*0.5
 
     def _calc_orientation(self):
@@ -296,6 +296,7 @@ class PropModel:
     def _init_speed_vars(self):
         self._ei = np.zeros(self._nodes)
         self._rot_per_sec = 15
+        self._unity_array = np.linspace(0,1,200)
 
     def _set_slipstream_variables(self):
         self._thetaFF = np.arccos(-self._zeta)#theta transform for fourier fit
@@ -303,7 +304,7 @@ class PropModel:
         self._current_fit = False
         self._bgx = np.tan(np.radians(4.8))/np.sqrt(-np.log(0.5))
         self._tang_profile_width_ratio = 1.5
-        self._tang_profile_max_ratio = 0.25
+        self._tang_profile_max_ratio = 0.1
 
 
     #---------------------------------------Functions for setting prop operating state-----------------------------------------
@@ -640,10 +641,10 @@ class PropModel:
         for i in range(1,self._r.size):
             r_prime[i] = np.sqrt((r_prime[i-1]*r_prime[i-1])+((self._r[i]*self._r[i])-(self._r[i-1]*self._r[i-1]))*Kv[i-1])
 
-        Vxim = Vxi[:,None]*kd
-        Vtim = np.empty_like(Vxim)
-        Vtim[int(self._r.size/10):][:] = 2*Vti[int(self._r.size/10):,None]*self._r[int(self._r.size/10):,None]/r_prime[int(self._r.size/10):][:]
-        Vtim[0:int(self._r.size/10)][:] = (Vtim[int(self._r.size/10)][:]/r_prime[int(self._r.size/10)][:])*r_prime[0:int(self._r.size/10)][:]
+        Vxi_prime = Vxi[:,None]*kd
+        Vti_prime = np.empty_like(Vxi_prime)
+        Vti_prime[int(self._r.size/10):][:] = 2*Vti[int(self._r.size/10):,None]*self._r[int(self._r.size/10):,None]/r_prime[int(self._r.size/10):][:]
+        Vti_prime[0:int(self._r.size/10)][:] = (Vti_prime[int(self._r.size/10)][:]/r_prime[int(self._r.size/10)][:])*r_prime[0:int(self._r.size/10)][:]
 
         Vx_point = np.empty_like(s)
         Vt_point = np.empty_like(s)
@@ -651,8 +652,8 @@ class PropModel:
         in_straight_tube = self._center2point_dist[loc]
 
         for i in range(0,s.size):
-            Vx_point[i] = np.interp(in_straight_tube[i],r_prime[:,i],Vxim[:,i], left=0,right=0)
-            Vt_point[i] = np.interp(in_straight_tube[i],r_prime[:,i],Vtim[:,i], left=0,right=0)*self._rot_dir
+            Vx_point[i] = np.interp(in_straight_tube[i],r_prime[:,i],Vxi_prime[:,i], left=0,right=0)
+            Vt_point[i] = np.interp(in_straight_tube[i],r_prime[:,i],Vti_prime[:,i], left=0,right=0)*self._rot_dir
 
         return Vx_point, Vt_point
 
@@ -682,17 +683,17 @@ class PropModel:
         kd = 1+(s/np.sqrt((s*s)+(R*R)))
 
         r_prime = np.empty([r.size,s.size])
-        r_prime[0] = r[0] #nacelle radius, assume it is constant with hub radius for now
+        r_prime[0] = 0.01*r[0] #nacelle radius, assume it is constant with hub radius for now
 
         Vx2 = Vxi[1:,None]+Vxi[0:-1,None]
         Kv = (2*self._Vinf+Vx2)/(2*self._Vinf+kd[None,:]*Vx2)
         for i in range(1,r.size):
             r_prime[i] = np.sqrt((r_prime[i-1]*r_prime[i-1])+((r[i]*r[i])-(r[i-1]*r[i-1]))*Kv[i-1])
 
-        Vxim = Vxi[:,None]*kd
-        Vtim = np.empty_like(Vxim)
-        Vtim[int(r.size/10):][:] = 2*Vti[int(r.size/10):,None]*r[int(r.size/10):,None]/r_prime[int(r.size/10):][:]
-        Vtim[0:int(r.size/10)][:] = (Vtim[int(r.size/10)][:]/r_prime[int(r.size/10)][:])*r_prime[0:int(r.size/10)][:]
+        Vxi_prime = Vxi[:,None]*kd
+        Vti_prime = np.empty_like(Vxi_prime)
+        Vti_prime[int(r.size/10):][:] = 2*Vti[int(r.size/10):,None]*r[int(r.size/10):,None]/r_prime[int(r.size/10):][:]
+        Vti_prime[0:int(r.size/10)][:] = (Vti_prime[int(r.size/10)][:]/r_prime[int(r.size/10)][:])*r_prime[0:int(r.size/10)][:]
 
         Vx_point = np.empty_like(s)
         Vt_point = np.empty_like(s)
@@ -700,8 +701,8 @@ class PropModel:
         r_cp_in_tube = r_cp[stream_loc]
 
         for i in range(0,s.size):
-            Vx_point[i] = np.interp(r_cp_in_tube[i],r_prime[:,i],Vxim[:,i], left=0,right=0)
-            Vt_point[i] = np.interp(r_cp_in_tube[i],r_prime[:,i],Vtim[:,i], left=0,right=0)*self._rot_dir
+            Vx_point[i] = np.interp(r_cp_in_tube[i],r_prime[:,i],Vxi_prime[:,i], left=0,right=0)
+            Vt_point[i] = np.interp(r_cp_in_tube[i],r_prime[:,i],Vti_prime[:,i], left=0,right=0)*self._rot_dir
 
         tangential_vel = np.zeros_like(control_points)
         axial_vel = np.zeros_like(control_points)
@@ -711,310 +712,9 @@ class PropModel:
 
         return total_vel
 
-    def _find_propwash_velocities_Epema(self,control_points):#Epema's method
-        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
-        pos = self._position
-        centerline_dist = np.dot((control_points-pos),self._prop_forward)#distance down centerline to position of min distance to point. negative is behind prop, positive is in front of prop
-        centerline_point = pos+self._prop_forward*centerline_dist[:, np.newaxis]#position on centerline closest to the control point
-        center2point_vec = control_points-centerline_point #shortest vector from control point to centerline
-        r_cp = self._vec_mag_mult(center2point_vec) #distance from center line to control point
-        tangent_vec = np.cross(self._prop_forward,center2point_vec/r_cp[:,None])#direction of tangential velocity
-        stream_loc = np.where((abs(r_cp)<=(self._d/2))&(centerline_dist<0.))#indices of control points that fall within uncontracted propwash cylinder
-
-        #------based on approach and notation set forth by Epema 2017-----------
-        R = self._d/2
-        x = -centerline_dist[stream_loc]
-        r = r_cp[stream_loc]
-        
-        #subterms to calculate a
-        a_1 = (R*R-r*r-x*x)**2
-        a_2 = np.sqrt(a_1+4*R*R*x*x)
-        a_3 = (a_2+R*R-r*r-x*x)/(2*R*R)
-        a = np.sqrt(a_3)
-
-        #axial velocity scaling factor
-        fva_1 = np.arcsin(R/np.sqrt(x*x+R*R))
-        fva = 2+(-a+(x/R)*fva_1)
-
-        #Slipstream contraction ratio
-        J = self._J
-        if J == 0:
-            kd = 1+(x/np.sqrt((x*x)+(R*R)))
-            Contract_ratio = np.sqrt(1/kd)
-        else:
-            Tc = 8*self._CT/np.pi/J/J
-            b = 0.5*(-1+np.sqrt(1+Tc*(8/np.pi)))
-            kd = 1+(x/np.sqrt((x*x)+(R*R)))
-            Contract_ratio = np.sqrt((1+b)/(1+b*kd))
-
-        Vx = self._Vxi_fun(r/Contract_ratio)*fva
-        Vt = self._Vti_fun(r/Contract_ratio)*2
-
-        tangential_vel = np.zeros_like(control_points)
-        axial_vel = np.zeros_like(control_points)
-        tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt[:,None]
-        axial_vel[stream_loc] = self._slip_dir*Vx[:,None]
-        total_vel = tangential_vel+axial_vel
-
-        return total_vel
-
-    #-------------------Goates method based on Khan approach------------------------------------------
-
-    def _find_propwash_velocities_Goates_Khan(self,control_points):#Goates' method based on Khan approach
-        if self._current_fit == False:
-            self._VxiFF_fun,self._VtiFF_fun = self._find_VxFF()#fourier fit of induced velocity
-            self._current_fit = True
-
-        #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
-        pos = self._position
-        centerline_dist = np.dot((control_points-pos),self._slip_dir)#distance down centerline to position of min distance to point. negative is upstream, positive is downstream
-        centerline_point = pos+self._slip_dir*centerline_dist[:, np.newaxis]#position on centerline closest to the control point
-        center2point_vec = control_points-centerline_point #shortest vector from control point to centerline
-        r_cp = self._vec_mag_mult(center2point_vec) #distance from center line to control point
-        tangent_vec = np.cross(self._prop_forward,center2point_vec/r_cp[:,None])#direction of tangential velocity
-        stream_loc = np.where((abs(r_cp)<=(self._d/2+centerline_dist))&(centerline_dist>0.))#indices of control points that fall within uncontracted propwash cylinder
-
-
-        x = centerline_dist[stream_loc]
-        r = r_cp[stream_loc]
-
-        xo = self._d/2#this can change. I just think its a good value to start off with
-        R = self._d/2
-
-        #find outer radius at efflux plane
-        if self._Vs == 0:
-            kd = 1+(xo/np.sqrt((xo*xo)+(R*R)))
-            Con_ratio_o = np.sqrt(1/kd)
-        else:
-            Tc = 8*self._CT/np.pi/self._J/self._J
-            b = 0.5*(-1+np.sqrt(1+Tc*(8/np.pi)))
-            kd = 1+(xo/np.sqrt((xo*xo)+(R*R)))
-            Con_ratio_o = np.sqrt((1+b)/(1+b*kd))
-
-        Ro = R*Con_ratio_o
-
-        #append points along efflux plane to analysis arrays to determine velocity profile @ xo
-        No = 200
-        ro = np.linspace(0,Ro,No)
-        r = np.append(r,ro)
-        x = np.append(x,np.full_like(ro,xo))
-
-        blend_zfa = np.where(x<xo,(x/xo),1)
-
-        if self._Vs == 0:
-            kd = 1+(x/np.sqrt((x*x)+(R*R)))
-            Con_ratio = np.sqrt(1/kd)
-        else:
-            Tc = 8*self._CT/np.pi/self._J/self._J
-            b = 0.5*(-1+np.sqrt(1+Tc*(8/np.pi)))
-            kd = 1+(x/np.sqrt((x*x)+(R*R)))
-            Con_ratio = np.sqrt((1+b)/(1+b*kd))
-
-        #subterms to calculate a
-        a_1 = (R*R-r*r-x*x)**2
-        a_2 = np.sqrt(a_1+4*R*R*x*x)
-        a_3 = (a_2+R*R-r*r-x*x)/(2*R*R)
-        a = np.sqrt(a_3)
-
-        #axial velocity scaling factor
-        fva_1 = np.arcsin(R/np.sqrt(x*x+R*R))
-        fva = 2+(-a+(x/R)*fva_1)
-
-        Vx_ZFA_raw = self._Vxi_fun(r/Con_ratio)*fva
-        Vx_ZFA_FF = self._VxiFF_fun(r/Con_ratio)*fva
-
-        Vt_ZFA_raw = self._Vti_fun(r/Con_ratio)*2
-        Vt_ZFA_FF = self._VtiFF_fun(r/Con_ratio)*2
-
-        #initialize all velocity values to inviscid value
-        Vx = (1-blend_zfa)*Vx_ZFA_raw + blend_zfa*Vx_ZFA_FF+self._Vs #add freestream component in stream direction
-        Vt = (1-blend_zfa)*Vt_ZFA_raw + blend_zfa*Vt_ZFA_FF
-
-        #equivalent jet profile
-        Uo = self._equivalent_jet_GK(Vx[-No:],r[-No:])
-
-        #determine length of ZFE
-        U_ratio = self._Vs/Uo
-        l_zfe = 2*Ro*np.sqrt(1+U_ratio)/np.sqrt(2)/self._bg/(1-U_ratio)
-        zfe_loc = np.where((x<xo+l_zfe) & (x>xo))
-        zef_loc = np.where(x>xo+l_zfe)
-
-        if self._Vs != 0:
-            self._integrate_coflow_GK(Uo,2*r[-1],xo,l_zfe)
-
-        #correct velocities in zone of flow establishment
-        Vx[zfe_loc] = self._find_zfe_GK(x[zfe_loc],r[zfe_loc],Vx[-No:],Vt[-No],r[-No:],Uo,xo,l_zfe)
-        Vx[zef_loc] = self._find_zef_GK(x[zef_loc],r[zef_loc],xo,r[-1],Uo)
-
-        Vx = Vx[:-No]-self._Vs#remove efflux plane points and change to excess(induced) velocity
-        Vt = Vt[:-No]
-
-        tangential_vel = np.zeros_like(control_points)
-        axial_vel = np.zeros_like(control_points)
-        tangential_vel[stream_loc] = tangent_vec[stream_loc]*Vt[:,None]
-        axial_vel[stream_loc] = self._slip_dir*Vx[:,None]
-        total_vel = tangential_vel+axial_vel
-
-        return total_vel
-
-    def _integrate_coflow_GK(self,Uo,Do,xo,l_zfe):
-        Meo = Do*Do*np.pi*Uo*(Uo-self._Vs)/4#excess momentum at efflux plane
-        self._l_m = np.sqrt(Meo)/self._Vs#momentum length scale
-        self._B = Do/np.sqrt(1+self._Vs/Uo)#top hat half width at end of ZFE
-
-        #initial conditions for ODE at beginning of ZEF
-        Bs = [self._B/self._l_m]
-        Us = -0.5+np.sqrt(1+4/(np.pi*Bs[-1]*Bs[-1]))/2
-        xs = [(xo+l_zfe)/self._l_m]
-
-        #setup ODE solver
-        f = ode(self._coflow_spread_GK)
-        f.set_integrator('dopri5')
-        f.set_initial_value(Bs[-1],xs[-1])
-
-        #xs step size and max value of iterations
-        dxs = self._d/5/self._l_m
-        iters = 0
-        max_iters = 200
-
-        #step through xs range
-        while f.successful() and iters<max_iters:
-            f.integrate(f.t+dxs)
-            xs.append(f.t)
-            Bs.append(f.y)
-            iters+=1
-
-        Bs = np.array(Bs)
-        xs = np.array(xs)
-
-        x = xs*self._l_m
-
-        #create interpolation function
-        self._Bs_fun = interp1d(x,Bs.flatten(),kind = 'cubic',fill_value = 'extrapolate')
-
-
-    def _coflow_spread_GK(self, xs, Bs):
-        Us = -0.5+np.sqrt(1+4/(np.pi*Bs*Bs))/2
-        dBs = np.sqrt(2)*self._bg*Us/(1+Us)
-        return dBs
-
-    def _find_zfe_GK(self,x,r,Vxo,Vto,ro,Uo,xo,l_zfe):
-        if self._Vs == 0:
-            b = self._bg*(x-xo)
-        else:
-            b_end = self._B/np.sqrt(2)
-            b = b_end*(x-xo)/l_zfe
-
-        Ro = ro[-1]
-        r_integ = np.linspace(0,Ro*10,ro.size*10)
-
-        #determine excess momentum at efflux plane
-        Meo = np.pi*Ro*Ro*Uo*(Uo-self._Vs)
-
-        #setup tophat and raw profiles for blending
-        tophat = np.where(r_integ<=Ro, Uo, self._Vs)
-        profile = np.full_like(r_integ,self._Vs)
-        profile[:ro.size] = Vxo
-
-        #blend tophat and fourier velocity profiles together
-        blend = (x-xo)/l_zfe
-        temp_U = (1-blend[:,None])*profile[None,:]+blend[:,None]*tophat[None,:]
-
-        #determine radius of mixing region start and velocity at that point
-        R_mix = -Ro*(x-xo)/l_zfe+Ro
-        #U_Rmix = np.zeros_like(R_mix)
-        #for i in range(0,R_mix.size):
-        #    U_Rmix[i] = np.interp(R_mix[i],r_integ,temp_U[i])
-
-        U_Rmix_fun = interp1d(r_integ,temp_U,kind = 'linear',axis = 1)
-        U_Rmix = np.diagonal(U_Rmix_fun(R_mix))
-
-        U_mix = (U_Rmix[:,None]-self._Vs)*np.exp(-((r_integ[None,:]-R_mix[:,None])**2)/(b[:,None]*b[:,None]))+self._Vs
-        temp_U = np.where(r_integ[None,:]<R_mix[:,None],temp_U,U_mix)
-
-
-        U = self._conserve_momentum_GK(temp_U,r_integ,Meo,U_Rmix,R_mix,b)
-
-        #interpolate velocity at desired r
-        Vx = np.zeros_like(r)
-        for i in range(0,r.size):
-            Vx[i] = np.interp(r[i],r_integ,U[i])
-
-        return Vx
-
-    def _conserve_momentum_GK(self, temp_U, r_integ, Meo, U_Rmix,R_mix, b,error = 1E-10):
-        #use secant method to determine necessary Vx scaling factor to conserve momentum in modified profile
-        r_full = np.broadcast_to(np.expand_dims(r_integ,0),temp_U.shape)
-        core = np.where(r_full<R_mix[:,None])
-
-        scale0 = np.ones_like(R_mix)
-        scale1 = np.full_like(scale0,1.1)
-        Me0 = self._calc_momentum_zfe_GK(temp_U, r_full, r_integ,R_mix,b,scale0)-Meo
-        Me1 = self._calc_momentum_zfe_GK(temp_U, r_full, r_integ,R_mix,b,scale1)-Meo
-
-        scale2 = np.copy(scale0)
-        i = 0
-        while True:
-            loc = np.where(abs((scale1-scale0)/scale0)>error)
-            scale2[loc] = scale1[loc]-((Me1[loc]*(scale1[loc]-scale0[loc]))/(Me1[loc]-Me0[loc]))
-            i+=1
-            if loc[0].size == 0:
-                break
-            scale0 = np.copy(scale1)
-            scale1 = np.copy(scale2)
-            Me0 = np.copy(Me1)
-            Me1 = self._calc_momentum_zfe_GK(temp_U, r_full, r_integ,R_mix,b,scale1)-Meo
-
-        U = scale2[:,None]*(temp_U-self._Vs)+self._Vs
-
-        return U 
-
-    def _calc_momentum_zfe_GK(self, U, r_full, r_integ, R_mix, b,scale = None):
-        if scale is None:
-            scale = np.ones_like(R_mix)
-        scaled_U = ((U-self._Vs)*scale[:,None])+self._Vs
-
-        U_Rmix_fun = interp1d(r_integ,scaled_U,kind = 'linear',axis = 1)
-        U_Rmix = np.diagonal(U_Rmix_fun(R_mix))
-
-        #determine excess momentum of scaled_U profile
-        Ume = U_Rmix-self._Vs
-
-        Me_mix = np.pi*Ume*Ume*b*(np.sqrt(np.pi)*R_mix*((1/np.sqrt(2))+self._Vs/Ume)+b*(0.5+self._Vs/Ume))#mixing region
-        
-
-        core_U = np.where(r_full<R_mix[:,None],scaled_U,self._Vs)
-        Me_core = 2*np.pi*simps(core_U*(core_U-self._Vs)*r_full,r_full)
-
-        Me_u = Me_mix+Me_core
-
-        return Me_u
-
-    def _find_zef_GK(self,x,r,xo,Ro,Uo):
-        if self._Vs == 0:
-            b = self._bg*(x-xo)
-            Um = Uo*(1/np.sqrt(2)/self._bg)*2*Ro/(x-xo)
-        else:
-            Bs = self._Bs_fun(x)
-            b = Bs*self._l_m/np.sqrt(2)
-            Us = -0.5+np.sqrt(1+4/(np.pi*Bs*Bs))/2
-            dU = Us*self._Vs
-            Um = 2*dU
-
-        Vx = Um*np.exp(-((r/b)**2))+self._Vs
-        return Vx
-
-
-    def _equivalent_jet_GK(self,Vx,ro):
-        Ro = ro[-1]
-        integ = (8/(Ro*Ro))*simps(Vx*(Vx-self._Vs)*ro,ro)
-        root = np.sqrt((self._Vs*self._Vs)+integ)
-        Uo = (self._Vs+root)/2
-        return Uo
-
     #---------------------------Goates method based on Stone's inviscid approach with viscous------------------
     #---------------------------corrections based on turbulent jet correlations--------------------------------
-    @profile
+
     def _find_propwash_velocities_Goates(self,control_points):
         #determine which control points fall in cylinder behind prop and their respective distances along the streamtube and from the center of the streamtube
         pos = self._position
@@ -1035,7 +735,7 @@ class PropModel:
         r_prop = self._r
 
         #excess momentum and equivalent jet in plane of prop
-        Me_prop = 2*np.pi*simps(Vxi*(Vxi+self._Vs)*r_prop, r_prop)
+        Me_prop = 2*np.pi*trapz(Vxi*(Vxi+self._Vs)*r_prop, r_prop)
         Uo_prop = 0.5*(self._Vs+np.sqrt(self._Vs*self._Vs+4*Me_prop/np.pi/R/R))
 
         #very rough guess for ZFE length based on initial stream
@@ -1047,123 +747,127 @@ class PropModel:
         N = 100
         x = np.append(x,np.linspace(0,1.5*x_end,N))
 
-        kd = 1+(x/np.sqrt((x*x)+(R*R)))#slipstream development factor 
 
-        r_prime = np.empty([x.size,r_prop.size])
+        kd_cf = 2 #slipstream development correction factor
+        kd = 1+(kd_cf*x/np.sqrt((x*x)+(R*R)))#slipstream development factor 
+        #vortex breakdown results in momentum stagnating past 0.5 diameters downstream in viscous slipstream
+        x_max = 0.1875*self._d
+        kd_max = 1+(kd_cf*x_max/np.sqrt((x_max*x_max)+(R*R)))
+        kd = np.where(x>x_max,kd_max,kd)
+
+
+        unique_kd,indices = np.unique(kd,return_inverse = True)
+
+        r_prime = np.empty([unique_kd.size,r_prop.size])
         r_prime[:,0] = 0.001*self._d#r_prop[0]#nacelle radius, need to address this as it will strongly affect tangential velocity
 
         Vx2 = Vxi[1:]+Vxi[0:-1]
 
-        Kv = (2*self._Vs+Vx2[None,:])/(2*self._Vs+kd[:,None]*Vx2[None,:])
+        Kv = (2*self._Vs+Vx2[None,:])/(2*self._Vs+unique_kd[:,None]*Vx2[None,:])
         r_prop_2 = r_prop*r_prop
         for i in range(1,r_prop.size):
             r_prime[:,i] = np.sqrt((r_prime[:,i-1]*r_prime[:,i-1])+(r_prop_2[i]-r_prop_2[i-1])*Kv[:,i-1])
 
-        Vxim = Vxi[None,:]*kd[:,None]
-        Vtim = Vti*2*(r_prop/r_prime)
+        Vxi_prime = Vxi[None,:]*unique_kd[:,None]
+        Vti_prime = Vti*2*(r_prop/r_prime)
 
-        #calculate excess momentum of inviscid slipstream at each x position of control points
-        Mes = np.empty_like(x)
-        for i in range(0,x.size):
-            Mes[i] = 2*np.pi*simps(Vxim[i]*(Vxim[i]+self._Vs)*r_prime[i], r_prime[i])
+        for i in range(unique_kd.size):
+            hub_r = self._hd/2
+            hub_Vt = np.interp(hub_r,r_prime[i,:],Vti_prime[i,:])
+            Vti_prime[i,:] = np.where(r_prime[i,:]<hub_r,hub_Vt*(r_prime[i,:]/hub_r),Vti_prime[i,:])
 
         #calculate swirling axial excess momentum
-        Ms = np.empty_like(x)
-        for i in range(0,x.size):
-            Ms[i] = simps((Vxim[i]*(Vxim[i]+self._Vs)-0.5*(Vtim[i]*Vtim[i]))*r_prime[i], r_prime[i])
+        Ms = np.empty_like(unique_kd)
+        for i in range(0,Ms.size):
+            Ms[i] = trapz((Vxi_prime[i]*(Vxi_prime[i]+self._Vs)-0.5*(Vti_prime[i]*Vti_prime[i]))*r_prime[i], r_prime[i])
 
         #calculate swirling angular momentum
-        Ls = np.empty_like(x)
-        for i in range(0,x.size):
-            Ls[i] = simps(Vxim[i]*Vtim[i]*r_prime[i]*r_prime[i], r_prime[i])#unsure whether Vxim or (Vxim+Vs) should be used here....
+        Ls = np.empty_like(unique_kd)
+        for i in range(0,Ls.size):
+            Ls[i] = trapz((Vxi_prime[i]+self._Vs)*Vti_prime[i]*r_prime[i]*r_prime[i], r_prime[i])
 
         Rs = r_prime[:,-1]#outer radius of slipstream at each x position of control points
 
-
         #find equivalent axial and tangential profiles that conserve axial and tangential momentum
-        du, dw = self._equivalent_velocities(Ms,Ls,Rs,x)
+        du_eq, dw_eq = self._equivalent_swirl_jet(Ms,Ls,Rs)
 
+        Vxi_prime = Vxi_prime[indices]
+        Vti_prime = Vti_prime[indices]
+        r_prime = r_prime[indices]
+        Ms = Ms[indices]
+        Ls = Ls[indices]
+        Rs = Rs[indices]
+        du_eq = du_eq[indices]
+        dw_eq = dw_eq[indices]
 
         S = Ls/Ms/Rs
 
         #spread rate based on swirl number
         beta_g = np.tan(np.radians(4.8+14*S))/np.sqrt(-np.log(0.5))
-        bgx = self._bgx
-        bgt = beta_g-bgx
+        correction = np.sqrt(2)
+        self._bx = correction*self._bgx
+        bt = correction*(beta_g-self._bgx)
 
-        self._Ms_fun = interp1d(x[-N:],Ms[-N:],kind = 'cubic',fill_value = 'extrapolate')
-        self._Ls_fun = interp1d(x[-N:],Ls[-N:],kind = 'cubic',fill_value = 'extrapolate')
-        self._du_fun = interp1d(x[-N:],du[-N:],kind = 'cubic',fill_value = 'extrapolate')
-        self._dw_fun = interp1d(x[-N:],dw[-N:],kind = 'cubic',fill_value = 'extrapolate')
-        self._bgt_fun = interp1d(x[-N:],bgt[-N:],kind = 'cubic',fill_value = 'extrapolate')
+        self._Ms_fun = interp1d(x[-N:],Ms[-N:],kind = 'linear',bounds_error = False, fill_value = (0,Ms[-1]))
+        self._Ls_fun = interp1d(x[-N:],Ls[-N:],kind = 'linear',bounds_error = False, fill_value = (0,Ls[-1]))
+        self._du_eq_fun = interp1d(x[-N:],du_eq[-N:],kind = 'linear',bounds_error = False, fill_value = (0,du_eq[-1]))
+        self._dw_eq_fun = interp1d(x[-N:],dw_eq[-N:],kind = 'linear',bounds_error = False, fill_value = (0,dw_eq[-1]))
+        self._bt_fun = interp1d(x[-N:],bt[-N:],kind = 'linear',bounds_error = False, fill_value = (0,bt[-1]))
 
-        xe,b_xe,um_xe,wm_xe = self._find_swirl_xe(du[-N:],dw[-N:],Ms[-N:],Ls[-N:],Rs[-N:],bgx,bgt[-N:],x[-N:],N)
+        xe,b_xe,um_xe,wm_xe = self._find_swirl_xe(du_eq[-N:],dw_eq[-N:],Ms[-N:],Ls[-N:],Rs[-N:],self._bx,bt[-N:],x[-N:],N,x_end)
 
         M_xe = self._Ms_fun(xe)
         L_xe = self._Ls_fun(xe)
+        bt_xe = self._bt_fun(xe)
 
-
+        #find farthest point of interest downstream
+        max_x = np.amax(x[:-N])
+        
         #integrate ZEF
-        self._integrate_ZEF(b_xe,M_xe,L_xe,um_xe,wm_xe,xe)
+        if max_x>xe:
+            self._integrate_ZEF(b_xe,M_xe,L_xe,um_xe,wm_xe,xe,bt_xe,max_x)
 
         #remove additional points used to find xe
         x = np.delete(x,np.s_[-N:])
         r_prime = np.delete(r_prime,np.s_[-N:],axis = 0)
-        Vxim = np.delete(Vxim,np.s_[-N:],axis = 0)
-        Vtim = np.delete(Vtim,np.s_[-N:],axis = 0)
+        Vxi_prime = np.delete(Vxi_prime,np.s_[-N:],axis = 0)
+        Vti_prime = np.delete(Vti_prime,np.s_[-N:],axis = 0)
         Rs = np.delete(Rs,np.s_[-N:])
         Ms = np.delete(Ms,np.s_[-N:])
         Ls = np.delete(Ls,np.s_[-N:])
-        du = np.delete(du,np.s_[-N:])
-        dw = np.delete(dw,np.s_[-N:])
-        bgt = np.delete(bgt,np.s_[-N:])
+        du_eq = np.delete(du_eq,np.s_[-N:])
+        dw_eq = np.delete(dw_eq,np.s_[-N:])
+        bt = np.delete(bt,np.s_[-N:])
 
-        Mes = np.delete(Mes,np.s_[-N:])
+        unique_x,unique,full = np.unique(x,return_index = True,return_inverse = True)
 
-        Uo = 0.5*(self._Vs+np.sqrt(self._Vs*self._Vs+4*Mes/np.pi/Rs/Rs))#uniform total jet velocity of equivalent excess axial momentum at each x position of control points
-        '''
-        #predict location of end of ZFE and tophat half radius at that location
-        xe,Be = self._find_xe(Mes[-N:],Uo[-N:],beta_g[-N:],x[-N:],N)
-        Mee = np.interp(xe,x[-N:],Mes[-N:])
-
-        beta_g_fun = interp1d(x[-N:], beta_g[-N:],kind = 'cubic',bounds_error = False,fill_value = (beta_g[-N],beta_g[-1]))
-        b_fun = self._integrate_static_zfe(xe,beta_g_fun)#integrate ODE to trace progression of b based on changing swirl value
-
-
-        #test to see if two different methods for half-widths line up at end of ZFE
-        x_test = np.linspace(0,xe,100)
-        plt.plot(x_test, b_fun(x_test))
-
-        x_end = np.array([0,xe])
-        b_end = np.array([0,Be/np.sqrt(2)])
-        plt.plot(x_end,b_end)
-        plt.show()
-        quit()
-        '''
+        r_prime = r_prime[unique]
+        Vxi_prime = Vxi_prime[unique]
+        Vti_prime = Vti_prime[unique]
+        Rs = Rs[unique]
+        Ms = Ms[unique]
+        Ls = Ls[unique]
+        du_eq = du_eq[unique]
+        dw_eq = dw_eq[unique]
+        bt = bt[unique]
 
         #add viscous effects to ZFE
-        zfe = np.where(x<xe)
-        zef = np.where(x>xe)
-        b = np.empty_like(x)
+        zfe = np.where(unique_x<xe)
+        zef = np.where(unique_x>xe)
+        b = np.empty_like(unique_x)
         #assume linear expansion of mixing region in ZFE
-        b[zfe] = b_xe*(x[zfe]/xe)
-        b[zef] = self._bg_ZEF_fun(x[zef])
+        b[zfe] = b_xe*(unique_x[zfe]/xe)
+        if max_x>xe:
+            b[zef] = self._bg_ZEF_fun(unique_x[zef])
         c = b*self._tang_profile_width_ratio 
         r_wm = self._tang_profile_max_ratio*c
-        '''
-        if self._Vs == 0:
-            b[zef] = b_xe+self._bg*(x[zef]-xe)
-        else:
-            Bs = self._Bs_fun(x[zef])
-            b[zef] = Bs*self._l_m/np.sqrt(2)
-        '''
 
-        blend = x[zfe]/xe
+        blend = unique_x[zfe]/xe
         Rpc = Rs[zfe]*(1-blend)#radius of potential core
 
         #develop axial profiles in zone of flow establishment
-        temp_U = ((1-blend[:,None])*(Vxim[zfe])+(blend*du[zfe])[:,None])+self._Vs
-        temp_W = ((1-blend[:,None])*(Vtim[zfe])+(blend*dw[zfe])[:,None])
+        temp_U = ((1-blend[:,None])*(Vxi_prime[zfe])+(blend*du_eq[zfe])[:,None])+self._Vs
+        temp_W = ((1-blend[:,None])*(Vti_prime[zfe])+(blend*dw_eq[zfe])[:,None])
 
 
         scale_U,scale_W = self._conserve_swirl_momentum(temp_U,temp_W, r_prime[zfe],Ms[zfe],Ls[zfe], Rs[zfe],b[zfe],c[zfe],blend)
@@ -1171,20 +875,18 @@ class PropModel:
         scaled_U = (temp_U-self._Vs)*scale_U[:,None] + self._Vs
         scaled_W = temp_W*scale_W[:,None]
 
-        Vx = np.empty_like(x)
-        Vt = np.empty_like(x)
 
-
-        Rpc = (1-blend)*Rs
-
-        for i in range(scale_U.size):
+        Vx = np.zeros_like(x)
+        Vt = np.zeros_like(x)
+        
+        #get all points within zone of flow establishment
+        for i in range(unique_x[zfe].size):
             
-            scaled_U_fun = interp1d(r_prime[zfe][i],scaled_U[i], kind = 'cubic', bounds_error = False, fill_value = 0)
-            scaled_W_fun = interp1d(r_prime[zfe][i],scaled_W[i], kind = 'cubic', bounds_error = False, fill_value = 0)
+            scaled_U_fun = interp1d(r_prime[zfe][i],scaled_U[i], kind = 'linear', bounds_error = False, fill_value = 0)
+            scaled_W_fun = interp1d(r_prime[zfe][i],scaled_W[i], kind = 'linear', bounds_error = False, fill_value = 0)
 
             U_Rpc = scaled_U_fun(Rpc[i])
             Ume = U_Rpc-self._Vs
-
 
 
             #develop tangential velocity profile
@@ -1194,10 +896,11 @@ class PropModel:
             r_1 = blend[i]*r_wm_xe
             r_2 = (1-blend[i])*Rs[i]+blend[i]*r_wm_xe
             r_3 = (1-blend[i])*Rs[i]+blend[i]*c_xe
+            
 
             W_r1 = scaled_W_fun(r_1)
             W_r2 = scaled_W_fun(r_2)
-            r_w = np.linspace(0,r_3,500)
+            r_w = r_3*self._unity_array#np.linspace(0,r_3,500)
 
             W_visc = np.empty_like(r_w)
             inner_mix = np.where(r_w<r_1)
@@ -1208,46 +911,31 @@ class PropModel:
             W_visc[no_mix] = scaled_W_fun(r_w[no_mix])
             W_visc[outer_mix] = (-W_r2/(r_3-r_2))*(r_w[outer_mix]-r_3)
 
-            Vt[i] = np.interp(r[i],r_w,W_visc,left = 0, right = 0)
 
-            if r[i]<Rpc[i]:
-                Vx[i] = scaled_U_fun(r[i])
-            else:
-                Vx[i] = (Ume*np.exp(-((r[i]-Rpc[i])/b[zfe][i])**2))+self._Vs
-                
+            
+            corresponding = np.where(x == unique_x[zfe][i])
+            r_corr = r[corresponding]
+            Vt[corresponding] = np.interp(r_corr,r_w,W_visc,left = 0, right = 0)
+            Vx[corresponding] = np.where(r_corr<Rpc[i],scaled_U_fun(r_corr),(Ume*np.exp(-((r_corr-Rpc[i])/b[zfe][i])**2))+self._Vs)
 
-        '''
-        
-        U = self._conserve_momentum(temp_U,r_prime[zfe],Mes[zfe],Rpc,b[zfe])
+        #get all points in zone of established flow
+        if max_x>xe:
+            b = b[full]
+            c = b*self._tang_profile_width_ratio 
+            r_wm = self._tang_profile_max_ratio*c
 
-        U_Rpc = np.empty_like(Rpc)
-        for i in range(Rpc.size):
-            U_Rpc[i] = np.interp(Rpc[i],r_prime[zfe][i],U[i])
+            inner_mix_zef = np.where((x>xe)&(r<r_wm))
+            outer_mix_zef = np.where((x>xe)&(r>r_wm)&(r<c))
 
-        Ume_zfe = U_Rpc-self._Vs
+            wm_zef = self._wm_ZEF_fun(x)
 
-        Vx_zfe = np.zeros_like(r[zfe])
-        #inside potential core
-        for i in range(0,r[zfe].size):
-            center = (1-blend[i])*self._Vs+blend[i]*Uo[i]
-            Vx_zfe[i] = np.interp(r[zfe][i],r_prime[zfe][i],U[i], left=center,right=0)
-        #in mixing region
-        Vx_zfe = np.where(r[zfe]>Rpc, Ume_zfe*np.exp(-((r[zfe]-Rpc)**2)/(b[zfe]*b[zfe]))+self._Vs,Vx_zfe)
+            Vt[inner_mix_zef] = (r[inner_mix_zef]/r_wm[inner_mix_zef])*wm_zef[inner_mix_zef]
+            Vt[outer_mix_zef] = (-wm_zef[outer_mix_zef]/(c[outer_mix_zef]-r_wm[outer_mix_zef]))*(r[outer_mix_zef]-c[outer_mix_zef])
 
-        #centerline velocity in ZEF is based on inviscid excess momentum at that point
-        Ume_zef = -self._Vs+np.sqrt(self._Vs*self._Vs+(2*Mes[zef])/(np.pi*b[zef]*b[zef]))
-        Vx_zef = Ume_zef*np.exp(-((r[zef])**2)/(b[zef]*b[zef]))+self._Vs
+            zef_full = np.where(x>xe)
+            um_zef = self._um_ZEF_fun(x[zef_full])
 
-        Vx = np.empty_like(x)
-        Vx[zfe] = Vx_zfe
-        Vx[zef] = Vx_zef
-        Vx = Vx-self._Vs
-
-        Vt = np.empty_like(x)
-
-        for i in range(0,x.size):
-            Vt[i] = np.interp(r[i],r_prime[i,:],Vtim[i,:], left=0,right=0)*self._rot_dir
-        '''
+            Vx[zef_full] = (um_zef*np.exp(-(r[zef_full]/b[zef_full])**2))+self._Vs
 
         Vx = Vx-self._Vs
 
@@ -1259,11 +947,113 @@ class PropModel:
 
         return total_vel
 
-    def _integrate_ZEF(self,bg,Ms,Ls,um,wm,xe):
+    def _equivalent_swirl_jet(self,Ms,Ls,Rs):
+        #find ui and wi (magnitude of equivalent axial and tangential velocities, constant radially)
+        N = Ms.size
+        du_eq = []
+        dw_eq = []
+        initial_guess = np.array([100,100])
+        for i in range(N):
+            sol = opt.root(self._root_of_equivalent_swirl_jet,initial_guess,args=(Ms[i],Ls[i],Rs[i]))
+            if sol.success:
+                #print(i,': It worked! ', sol.nfev)
+                du_eq.append(sol.x[0])
+                dw_eq.append(sol.x[1])
+                initial_guess = sol.x
+            else:
+                raise RuntimeError("Unable to calculate equivalent jet velocities")
+
+        return np.array(du_eq), np.array(dw_eq)
+
+
+    def _root_of_equivalent_swirl_jet(self,x0,Ms,Ls,Rs):
+        du_eq = x0[0]
+        dw_eq = x0[1]
+
+        root_M = ((du_eq*(du_eq+self._Vs)-(dw_eq*dw_eq/2))*Rs*Rs/2)-Ms
+        root_L = ((du_eq+self._Vs)*dw_eq*Rs*Rs*Rs/3)-Ls
+
+        return [root_M,root_L]
+
+    def _find_swirl_xe(self,du_eq,dw_eq,Ms,Ls,Rs,bx,bt,x,N,x_end):
+
+        xe0 = x_end
+        xe1 = xe0*1.2
+        LHS0,RHS0,vel0 = self._swirl_xe_imbalance(xe0,du_eq,dw_eq,Ms,Ls,Rs,bx,bt,x,N)
+        LHS1,RHS1,vel1 = self._swirl_xe_imbalance(xe1,du_eq,dw_eq,Ms,Ls,Rs,bx,bt,x,N)
+        imbal0 = LHS0-RHS0
+        imbal1 = LHS1-RHS1
+        i = 0
+        while True:
+            xe2 = xe1-((imbal1*(xe1-xe0))/(imbal1-imbal0))
+            i+=1
+            if abs(xe2-xe1)<1E-12:
+                return xe2,LHS1,vel1[0],vel1[1]
+            xe0=xe1
+            imbal0=imbal1
+            xe1=xe2
+            LHS1,RHS1,vel1 = self._swirl_xe_imbalance(xe1,du_eq,dw_eq,Ms,Ls,Rs,bx,bt,x,N)
+            imbal1 = LHS1-RHS1
+
+    def _swirl_xe_imbalance(self,xe,du_eq,dw_eq,Ms,Ls,Rs,bx,bt,x,N):
+        x_ZFE = xe*self._unity_array#np.linspace(0,xe,N)
+        du_eq_ZFE = self._du_eq_fun(x_ZFE)
+        dw_eq_ZFE = self._dw_eq_fun(x_ZFE)
+        bt_ZFE = self._bt_fun(x_ZFE)
+
+        #determine mixing layer width at proposed xe based on spreading hypothesis
+        spread_bg = trapz((bx*np.absolute(du_eq_ZFE/2)+bt_ZFE*np.absolute(dw_eq_ZFE/2))/np.sqrt((self._Vs+du_eq_ZFE/2)*(self._Vs+du_eq_ZFE/2)+(dw_eq_ZFE/2)*(dw_eq_ZFE/2)),x_ZFE)
+        M_xe = self._Ms_fun(xe)
+        L_xe = self._Ls_fun(xe)
+
+        #determine mixing layer width and tangential velocity magnitude at proposed xe using momentum of self-similar profiles
+        similar_bg,um,wm = self._similar_momentum(M_xe,L_xe,du_eq_ZFE[-1],dw_eq_ZFE[-1],spread_bg)
+        velocities = (um,wm)
+        return spread_bg,similar_bg,velocities
+
+    def _similar_momentum(self,M,L,du_eq,dw_eq,spread_bg):
+        um = 0.8*du_eq
+        #find bg and wm from momentum equations
+        initial_guess = np.array([spread_bg,dw_eq])
+        sol = opt.root(self._root_of_similar_momentum,initial_guess,args = (M,L,um))
+        if sol.success:
+            bg = sol.x[0]
+            wm = sol.x[1]
+        else:
+            raise RuntimeError("Unable to locate transition from ZEF to ZFE")
+
+        return bg,um,wm
+
+    def _root_of_similar_momentum(self,x0,M,L,um):
+        bg = x0[0]
+        wm = x0[1]
+
+        #adjust these values to match experimental data
+        c = bg*self._tang_profile_width_ratio 
+        r_wm = self._tang_profile_max_ratio*c
+
+        #chunks of axial momentum equation
+        m0 = 0.25*(bg*bg*um)*(um+2*self._Vs)
+        m1 = 0.5*((wm*r_wm)/2)**2
+        m2 = 0.5*(wm/(r_wm-c))**2
+        m3 = -(3*(r_wm**4)-8*c*(r_wm**3)+6*c*c*r_wm*r_wm-c**4)/12
+
+        M_zero = (m0-m1-(m2*m3))-M
+
+        r_L = c*self._unity_array#np.linspace(0,c,100)
+        u_L = (um*np.exp(-((r_L/bg)**2)))+self._Vs
+        w_L = np.where(r_L<r_wm,wm*(r_L/r_wm),(wm/(r_wm-c))*(r_L-c))
+
+        L_zero = trapz(u_L*w_L*r_L*r_L,r_L)-L
+
+        return M_zero,L_zero
+
+
+    def _integrate_ZEF(self,bg,M_xe,L_xe,um,wm,xe,bt,max_x):
 
         #determine tophat profiles at xe
         initial_guess = np.array([bg,um/2,wm/2])
-        sol = opt.root(self._tophat_at_xe,initial_guess,args = (bg,um,Ms,Ls))
+        sol = opt.root(self._tophat_at_xe,initial_guess,args = (bg,um,M_xe,L_xe))
         if sol.success:
             B_xe = sol.x[0]
             U_xe = sol.x[1]
@@ -1277,18 +1067,20 @@ class PropModel:
 
         B = [B_xe]
         x = [xe]
+        self._tophat_guess = np.array([U_xe,W_xe])
 
         f = ode(self._expansion_rate_ZEF)
         f.set_integrator('dopri5')
         f.set_initial_value(B[-1],x[-1])
+        f.set_f_params(M_xe,L_xe,bt)
 
         #xs step size and max value of iterations
         dx = xe/50
         iters = 0
-        max_iters = 200
+        max_iters = 100
 
         #step through xs range
-        while f.successful() and iters<max_iters:
+        while f.successful() and x[-1]<max_x:
             f.integrate(f.t+dx)
             x.append(f.t)
             B.append(f.y)
@@ -1302,26 +1094,24 @@ class PropModel:
         bg_zef = []
         um_zef = []
         wm_zef = []
-        initial_guess_top = np.array([10,10])
-        initial_guess_self = np.array([B[0],10,10])
+        initial_guess_top = np.array([U_xe,W_xe])
+        initial_guess_self = np.array([bg,um,wm])
         for i in range(B.size):
-            M = self._Ms_fun(x[i])
-            L = self._Ls_fun(x[i])
-            sol = opt.root(self._tophat_velocities,initial_guess_top,args = ([B[i]],M,L))
+            sol = opt.root(self._tophat_velocities,initial_guess_top,args = ([B[i]],M_xe,L_xe))
             if sol.success:
                 U.append(sol.x[0])
                 W.append(sol.x[1])
             else:
-                raise RuntimeError("Unable to determine tophat profiles at transition from ZFE to ZEF")
+                raise RuntimeError("Unable to determine tophat profiles in integration of ZEF")
             initial_guess_top = np.array([U[-1],W[-1]])
 
-            sol = opt.root(self._self_similar_velocities,initial_guess_self,args = (B[i],M,L,U[i]))
+            sol = opt.root(self._self_similar_velocities,initial_guess_self,args = (B[i],M_xe,L_xe,U[i]))
             if sol.success:
                 bg_zef.append(sol.x[0])
                 um_zef.append(sol.x[1])
                 wm_zef.append(sol.x[2])
             else:
-                raise RuntimeError("Unable to determine tophat profiles at transition from ZFE to ZEF")
+                raise RuntimeError("Unable to determine self similar profiles from tophat profiles in ZEF")
             initial_guess_self = np.array([bg_zef[-1],um_zef[-1],wm_zef[-1]])
 
 
@@ -1331,23 +1121,31 @@ class PropModel:
         self._um_ZEF_fun = interp1d(x,um_zef,kind = 'cubic',fill_value = 'extrapolate')
         self._wm_ZEF_fun = interp1d(x,wm_zef,kind = 'cubic',fill_value = 'extrapolate')
 
-    def _expansion_rate_ZEF(self, x, B):
-        M = self._Ms_fun(x)
-        L = self._Ls_fun(x)
+    def _expansion_rate_ZEF(self, x, B,M,L,bt):
 
         #determine tophat profiles at xe
-        initial_guess = np.array([10,10])
+        initial_guess = self._tophat_guess
         sol = opt.root(self._tophat_velocities,initial_guess,args = (B,M,L))
         if sol.success:
             U = sol.x[0]
             W = sol.x[1]
+            self._tophat_guess[0] = U
+            self._tophat_guess[1] = W
         else:
             raise RuntimeError("Unable to determine tophat profiles at transition from ZFE to ZEF")
 
-        bgx = self._bgx
-        bgt = self._bgt_fun(x)
-        dB = (bgx*np.absolute(U)+bgt*np.absolute(W))/np.sqrt((self._Vs+U)*(self._Vs+U)+W*W)
+        bx = self._bx
+        dB = (bx*np.absolute(U)+bt*np.absolute(W))/np.sqrt((self._Vs+U)*(self._Vs+U)+W*W)
+
         return dB
+
+    def _tophat_velocities(self,x0,B,M,L):
+        U = x0[0]
+        W = x0[1]
+        B = B[-1]
+        M_zero = (B*B/2)*(U*(U+self._Vs)-(W*W/2))-M
+        L_zero = (B*B*B/3)*(U+self._Vs)*W-L
+        return (M_zero,L_zero)
 
     def _self_similar_velocities(self,x0,B,M,L,U):
         bg = x0[0]
@@ -1367,21 +1165,13 @@ class PropModel:
 
         M_zero = (m0-m1-(m2*m3))-M
 
-        r_L = np.linspace(0,c,100)
-        u_L = um*np.exp(-((r_L/bg)**2))
+        r_L = c*self._unity_array#np.linspace(0,c,100)
+        u_L = (um*np.exp(-((r_L/bg)**2)))+self._Vs
         w_L = np.where(r_L<r_wm,wm*(r_L/r_wm),(wm/(r_wm-c))*(r_L-c))
 
-        L_zero = simps(u_L*w_L*r_L*r_L,r_L)-L
+        L_zero = trapz(u_L*w_L*r_L*r_L,r_L)-L
 
         return (mass_zero,M_zero,L_zero)
-
-    def _tophat_velocities(self,x0,B,M,L):
-        U = x0[0]
-        W = x0[1]
-        B = B[-1]
-        M_zero = (B*B/2)*(U*(U+self._Vs)-(W*W/2))-M
-        L_zero = (B*B*B/3)*U*W-L
-        return (M_zero,L_zero)
 
     def _tophat_at_xe(self,x0,bg,um,M,L):
         B = x0[0]
@@ -1389,224 +1179,9 @@ class PropModel:
         W = x0[2]
         mass_zero = bg*bg*um-B*B*U
         M_zero = (B*B/2)*(U*(U+self._Vs)-(W*W/2))-M
-        L_zero = (B*B*B/3)*U*W-L
+        L_zero = (B*B*B/3)*(U+self._Vs)*W-L
 
         return (mass_zero,M_zero,L_zero)
-
-    def _find_swirl_xe(self,du,dw,Ms,Ls,Rs,bgx,bgt,x,N):
-        xe0 = 6.2*self._d
-        xe1 = xe0*1.2
-        LHS0,RHS0,vel0 = self._swirl_xe_imbalance(xe0,du,dw,Ms,Ls,Rs,bgx,bgt,x,N)
-        LHS1,RHS1,vel1 = self._swirl_xe_imbalance(xe1,du,dw,Ms,Ls,Rs,bgx,bgt,x,N)
-        imbal0 = LHS0-RHS0
-        imbal1 = LHS1-RHS1
-        i = 0
-        while True:
-            xe2 = xe1-((imbal1*(xe1-xe0))/(imbal1-imbal0))
-            i+=1
-            if abs(xe2-xe1)<1E-12:
-                return xe2,LHS1,vel1[0],vel1[1]
-            xe0=xe1
-            imbal0=imbal1
-            xe1=xe2
-            LHS1,RHS1,vel1 = self._swirl_xe_imbalance(xe1,du,dw,Ms,Ls,Rs,bgx,bgt,x,N)
-            imbal1 = LHS1-RHS1
-
-    def _swirl_xe_imbalance(self,xe,du,dw,Ms,Ls,Rs,bgx,bgt,x,N):
-
-
-        x_ZFE = np.linspace(0,xe,N)
-        du_ZFE = self._du_fun(x_ZFE)
-        dw_ZFE = self._dw_fun(x_ZFE)
-        bgt_ZFE = self._bgt_fun(x_ZFE)
-
-        #determine mixing layer width at proposed xe based on spreading hypothesis
-        spread_bg = simps((bgx*np.absolute(du/2)+bgt*np.absolute(dw/2))/np.sqrt((self._Vs+du/2)*(self._Vs+du/2)+(dw/2)*(dw/2)),x_ZFE)
-        M_xe = self._Ms_fun(xe)
-        L_xe = self._Ls_fun(xe)
-
-        #determine mixing layer width and tangential velocity magnitude at proposed xe using momentum of self-similar profiles
-        similar_bg,um,wm = self._similar_momentum(M_xe,L_xe,du_ZFE[-1],dw_ZFE[-1],spread_bg)
-        velocities = (um,wm)
-        return spread_bg,similar_bg,velocities
-
-    def _similar_momentum(self,M,L,du,dw,spread_bg):
-        um = du
-        #find bg and wm from momentum equations
-        initial_guess = np.array([spread_bg,dw])
-        sol = opt.root(self._root_of_similar_momentum,initial_guess,args = (M,L,um))
-        if sol.success:
-            bg = sol.x[0]
-            wm = sol.x[1]
-        else:
-            raise RuntimeError("Unable to locate transition from ZEF to ZFE")
-
-        return bg,um,wm
-
-    def _root_of_similar_momentum(self,x0,M,L,du):
-        bg = x0[0]
-        wm = x0[1]
-        um = du
-
-        #adjust these values to match experimental data
-        c = bg*self._tang_profile_width_ratio 
-        r_wm = self._tang_profile_max_ratio*c
-
-        #chunks of axial momentum equation
-        m0 = 0.25*(bg*bg*um)*(um+2*self._Vs)
-        m1 = 0.5*((wm*r_wm)/2)**2
-        m2 = 0.5*(wm/(r_wm-c))**2
-        m3 = -(3*(r_wm**4)-8*c*(r_wm**3)+6*c*c*r_wm*r_wm-c**4)/12
-
-        M_zero = (m0-m1-(m2*m3))-M
-
-        r_L = np.linspace(0,c,100)
-        u_L = um*np.exp(-((r_L/bg)**2))
-        w_L = np.where(r_L<r_wm,wm*(r_L/r_wm),(wm/(r_wm-c))*(r_L-c))
-
-        L_zero = simps(u_L*w_L*r_L*r_L,r_L)-L
-
-        return M_zero,L_zero
-
-
-    def _equivalent_velocities(self,Ms,Ls,Rs,x):
-        #find ui and wi (magnitude of equivalent axial and tangential velocities, constant radially)
-        N = Ms.size
-        du = []
-        dw = []
-        initial_guess = np.full(2,100)
-        for i in range(N):
-            sol = opt.root(self._root_of_equivalent_velocities,initial_guess,args=(Ms[i],Ls[i],Rs[i]))
-            if sol.success:
-                #print(i,': It worked! ', sol.nfev)
-                du.append(sol.x[0])
-                dw.append(sol.x[1])
-                initial_guess = sol.x
-            else:
-                raise RuntimeError("Unable to calculate equivalent jet velocities")
-
-        return np.array(du), np.array(dw)
-
-
-    def _root_of_equivalent_velocities(self,x0,Ms,Ls,Rs):
-        du = x0[0]
-        dw = x0[1]
-
-        root_M = ((du*(du+self._Vs)-(dw*dw/2))*Rs*Rs/2)-Ms
-        root_L = (du*dw*Rs*Rs*Rs/3)-Ls
-
-        return [root_M,root_L]
-
-
-    def _find_xe(self, Me,Uo,beta_g,x,N):
-        xe0 = 6.2*self._d
-        xe1 = xe0*1.2
-        LHS0,RHS0 = self._xe_imbalance(xe0,Me,Uo,beta_g,x,N)
-        LHS1,RHS1 = self._xe_imbalance(xe1,Me,Uo,beta_g,x,N)
-        imbal0 = LHS0-RHS0
-        imbal1 = LHS1-RHS1
-
-        while True:
-            xe2 = xe1-((imbal1*(xe1-xe0))/(imbal1-imbal0))
-            if abs(xe2-xe1)<1E-12:
-                return xe2,LHS1
-            xe0=xe1
-            imbal0=imbal1
-            xe1=xe2
-            LHS1,RHS1 = self._xe_imbalance(xe1,Me,Uo,beta_g,x,N)
-            imbal1 = LHS1-RHS1
-
-    def _xe_imbalance(self,xe,Me,Uo,beta_g,x,N):
-        Me_fun = interp1d(x,Me,kind = 'cubic',fill_value = 'extrapolate')
-        Uo_fun = interp1d(x,Uo,kind = 'cubic',fill_value = 'extrapolate')
-
-        Me_xe = Me_fun(xe)
-        Uo_xe = Uo_fun(xe)
-
-        LHS = 2*np.sqrt(Me_xe/(np.pi*(Uo_xe*Uo_xe-self._Vs*self._Vs)))
-
-        x_ZFE = np.linspace(0,xe,N)
-        Uo_ZFE = Uo_fun(x_ZFE)
-
-        RHS = simps(np.sqrt(2)*beta_g*(Uo_ZFE-self._Vs)/(Uo_ZFE+self._Vs),x_ZFE)
-
-        return LHS,RHS
-
-    def _integrate_static_zfe(self,xe,beta_g_fun):
-
-
-        b = [0]
-        x = [0]
-
-        iters = 0
-        max_iters = 100
-
-        dx = xe/max_iters
-
-        f = ode(self._db_static_zfe)
-        f.set_integrator('dopri5')
-        f.set_initial_value(b[-1],x[-1])
-        f.set_f_params(beta_g_fun)
-
-        while f.successful() and iters<max_iters:
-            f.integrate(f.t+dx)
-            x.append(f.t)
-            b.append(f.y)
-            iters +=1
-
-        b = np.array(b)
-        x = np.array(x)
-
-
-        b_fun = interp1d(x,b.flatten(),kind = 'cubic',fill_value = 'extrapolate')
-
-        return b_fun
-
-    def _db_static_zfe(self,x,b,beta_g_fun):
-        db = beta_g_fun(x)
-        return db
-
-
-    def _integrate_coflow(self,xe,Be,Mee):#Uo,Do,xo,l_zfe):
-        #Meo = Do*Do*np.pi*Uo*(Uo-self._Vs)/4#excess momentum at efflux plane
-        self._l_m = np.sqrt(Mee)/self._Vs#momentum length scale
-        
-        #initial conditions for ODE at beginning of ZEF
-        Bs = [Be/self._l_m]#initialize list
-        Us = -0.5+np.sqrt(1+4/(np.pi*Bs[-1]*Bs[-1]))/2
-        xs = [xe/self._l_m]
-
-
-        #setup ODE solver
-        f = ode(self._coflow_spread)
-        f.set_integrator('dopri5')
-        f.set_initial_value(Bs[-1],xs[-1])
-
-        #xs step size and max value of iterations
-        dxs = self._d/5/self._l_m
-        iters = 0
-        max_iters = 200
-
-        #step through xs range
-        while f.successful() and iters<max_iters:
-            f.integrate(f.t+dxs)
-            xs.append(f.t)
-            Bs.append(f.y)
-            iters+=1
-
-        Bs = np.array(Bs)
-        xs = np.array(xs)
-
-        x = xs*self._l_m
-
-        #create interpolation function
-        self._Bs_fun = interp1d(x,Bs.flatten(),kind = 'cubic',fill_value = 'extrapolate')
-
-
-    def _coflow_spread(self, xs, Bs):
-        Us = -0.5+np.sqrt(1+4/(np.pi*Bs*Bs))/2
-        dBs = np.sqrt(2)*self._bg*Us/(1+Us)
-        return dBs
 
     def _conserve_swirl_momentum(self,temp_U,temp_W, r_prime,Ms,Ls, Rs,b,c,blend):
         scale_U = []
@@ -1633,17 +1208,12 @@ class PropModel:
         scale_W = x0[1]
 
         scaled_U = (temp_U-self._Vs)*scale_U + self._Vs
-        scaled_U_fun = interp1d(r_prime,scaled_U, kind = 'cubic', bounds_error = False, fill_value = 0)
         scaled_W = temp_W*scale_W
-        scaled_W_fun = interp1d(r_prime,scaled_W, kind = 'cubic', bounds_error = False, fill_value = 0)
 
         Rpc = (1-blend)*Rs
 
-
-        U_Rpc = scaled_U_fun(Rpc)
+        U_Rpc = np.interp(Rpc,r_prime,scaled_U,left = 0, right = 0)
         Ume = U_Rpc-self._Vs
-
-
 
         #develop tangential velocity profile
         c_xe = c/blend
@@ -1653,9 +1223,9 @@ class PropModel:
         r_2 = (1-blend)*Rs+blend*r_wm_xe
         r_3 = (1-blend)*Rs+blend*c_xe
 
-        W_r1 = scaled_W_fun(r_1)
-        W_r2 = scaled_W_fun(r_2)
-        r_w = np.linspace(0,r_3,500)
+        W_r1 = np.interp(r_1,r_prime,scaled_W,left = 0, right = 0)
+        W_r2 = np.interp(r_2,r_prime,scaled_W,left = 0, right = 0)
+        r_w = r_3*self._unity_array#np.linspace(0,r_3,500)
 
         W_visc = np.empty_like(r_w)
         inner_mix = np.where(r_w<r_1)
@@ -1663,70 +1233,31 @@ class PropModel:
         no_mix = np.where((r_w>r_1)&(r_w<r_2))
 
         W_visc[inner_mix] = (r_w[inner_mix]/r_1)*W_r1
-        W_visc[no_mix] = scaled_W_fun(r_w[no_mix])
+        W_visc[no_mix] = np.interp(r_w[no_mix],r_prime,scaled_W,left = 0, right = 0)
         W_visc[outer_mix] = (-W_r2/(r_3-r_2))*(r_w[outer_mix]-r_3)
         #need to do something to get rid of the inviscid spike in the tang vel profile near the core.
 
 
-        U_visc = np.where(r_w<Rpc,scaled_U_fun(r_w),(Ume*np.exp(-((r_w-Rpc)/b)**2))+self._Vs)
+        #U_visc = np.where(r_w<Rpc,scaled_U_fun(r_w),(Ume*np.exp(-((r_w-Rpc)/b)**2))+self._Vs)
+        U_visc = np.where(r_w<Rpc,np.interp(r_w,r_prime,scaled_U,left = 0, right = 0),(Ume*np.exp(-((r_w-Rpc)/b)**2))+self._Vs)
+
 
         #Calculate Axial Momentum
         #axial component
         core_M = np.where(r_prime<Rpc,(scaled_U*(scaled_U-self._Vs))*r_prime,0)
-        Ax1 = simps(core_M,r_prime)
+        Ax1 = trapz(core_M,r_prime)
         Ax2 = 0.5*Ume*Ume*b*(np.sqrt(np.pi)*Rpc*((1/np.sqrt(2))+self._Vs/Ume)+b*(0.5+self._Vs/Ume))#mixing region
         Ax = Ax1+Ax2
         #tangential component
-        Tang = -0.5*simps(W_visc*W_visc*r_w,r_w)
+        Tang = -0.5*trapz(W_visc*W_visc*r_w,r_w)
         
         M_zero = Ax+Tang-Ms
 
         #Calculate Angular Momentum
 
-        L_zero = simps((U_visc-self._Vs)*W_visc*r_w*r_w,r_w)-Ls
+        L_zero = trapz(U_visc*W_visc*r_w*r_w,r_w)-Ls
 
         return M_zero,L_zero
-
-    def _conserve_momentum(self, temp_U, r_prime, Mes,Rpc,b,error = 1E-10):
-        scale0 = np.ones_like(Rpc)
-        scale1 = np.full_like(scale0,1.1)
-        Me0 = self._calc_momentum_zfe(temp_U,r_prime,Rpc,b,scale0)-Mes
-        Me1 = self._calc_momentum_zfe(temp_U,r_prime,Rpc,b,scale1)-Mes
-
-        scale2 = np.copy(scale0)
-
-        i = 0
-        while True:
-            loc = np.where(abs((scale1-scale0)/scale0)>error)
-            scale2[loc] = scale1[loc]-((Me1[loc]*(scale1[loc]-scale0[loc]))/(Me1[loc]-Me0[loc]))
-            i+=1
-            if loc[0].size == 0:
-                break
-            scale0 = np.copy(scale1)
-            scale1 = np.copy(scale2)
-            Me0 = np.copy(Me1)
-            Me1 = self._calc_momentum_zfe(temp_U,r_prime,Rpc,b,scale1)-Mes
-
-        U = scale2[:,None]*temp_U
-
-        return U 
-
-    def _calc_momentum_zfe(self,U,r,Rpc,b,scale = None):
-        if scale is None:
-            scale = np.ones_like(Rpc)
-        scaled_U = (U-self._Vs)*scale[:,None] + self._Vs
-
-        U_Rpc = np.empty_like(Rpc)
-        for i in range(Rpc.size):
-            U_Rpc[i] = np.interp(Rpc[i],r[i],scaled_U[i])
-
-        Ume = U_Rpc-self._Vs
-        Me_mix = np.pi*Ume*Ume*b*(np.sqrt(np.pi)*Rpc*((1/np.sqrt(2))+self._Vs/Ume)+b*(0.5+self._Vs/Ume))#mixing region
-        
-        core_U = np.where(r<Rpc[:,None],scaled_U,self._Vs)
-        Me_core = 2*np.pi*simps(core_U*(core_U-self._Vs)*r,r)
-
-        return Me_core+Me_mix
 
 
     #---------------------------------------Functions for calculating lift and drag coefficients-----------------------------------------
