@@ -1,12 +1,8 @@
 # MachUp
-NOTE: This readme represents the vision for the final product and as
-such, does not necessarily represent what is currently implemented. For
-documentation on what is currently implemented, see the docstrings.
-
-
-Machup is a Python (2.? - 3.?) library for the design and analysis of 
+Machup is a Python 3 library for the design and analysis of 
 fixed-wing aircraft. This includes things like calculating lift, 
-drag, pitching moments, and stability derivatives. 
+drag, pitching moments, and stability derivatives. A web-based
+version of MachUp can be found at aero.go.usu.edu.
 
 At the heart of machup is a modern numerical lifting-line algorithm that
 rapidly predicts flow over multiple lifting surfaces and can 
@@ -26,57 +22,88 @@ Python script:
 
 ```python
 import machup.MU as MU
+import numpy as np
+import matplotlib.pyplot as plt
 
-#Generate a new airplane object
-new_plane = MU.Airplane(inputs...)
-#Add main wing
-new_plane.addWing(inputs...)
-#Add vertical tail
-new_plane.addWing(inputs...)
-#Add horizontal tail
-new_plane.addWing(inputs...)
-#Add propeller
-new_plane.addProp(inputs...)
 
-#Generate MachUp model for airplane
-myModel = MU.MachUp(inputAirplane = new_plane)
+muAirplane = MU.MachUp("Example_FlyingWing.json")
 
-#Generate solution and store in results
-results = myModel.solve()
+aero_state = {"V_mag": 10,
+              "rho": 0.0023769,
+              "alpha": 0,
+              "beta": 0}
+prop_state = {"electric_throttle": 0.2}
+control_state = {"elevator": 0}
 
-#Access results
-print(results.Lift_Coeff)
-#Save .stl file of airplane for viewing in an stl viewer
-myModel.create_stl(filename = 'plane.stl')
+muAirplane.create_stl(filename="FlyingWing.stl")
+
+trim_info = muAirplane.pitch_trim(L_target=0.2,
+                                  aero_state=aero_state,
+                                  control_state=control_state,
+                                  prop_state=prop_state)
+print(trim_info)
+
+aero_state["alpha"] = trim_info["alpha"]
+control_state["elevator"] = trim_info["elevator"]
+
+forcesandmoments = muAirplane.solve(aero_state=aero_state,
+                                    control_state=control_state,
+                                    prop_state=prop_state)
+print(forcesandmoments)
+
+wing_dis, prop_dis = muAirplane.distributions(aero_state=aero_state,
+                                              control_state=control_state,
+                                              prop_state=prop_state)
+
+dynamic_pressure = 0.5*aero_state["rho"]*aero_state["V_mag"]**2
+spanwise_station = wing_dis["control_points"][:, 1][0:160]
+CZ = wing_dis["forces_xyz"][0:160, 2]/(dynamic_pressure*wing_dis["area"][0:160])
+plt.plot(spanwise_station, CZ, '^')
+plt.xlabel("Span Position Y (ft)")
+plt.ylabel("Section CZ")
+plt.show()
+
+plt.plot(prop_dis["radial_position"], prop_dis["induced_angle"], 'r--')
+plt.xlabel("Radial Position (ft)")
+plt.ylabel("Induced Angle, ei")
+plt.show()
 ```
 
 ## Features
 
-*Easy user interface
-*Fast
-*Incorperates viscous effects
-*Handles multiple lifting surfaces that have sweep, dihedral, and twist
-*Incorporates effects of prop wash on wings
-*Additional libraries available for...
+* Scriptable
+* Fast
+* Incorperates viscous effects
+* Handles multiple lifting surfaces that have sweep, dihedral, and twist
+* Incorporates effects of prop wash on wings
 
 ## Documentation
 
-Documentation can be found at [machup.readthedocs.io](machup.readthedocs.io)
-or by using the built in Python help() function to consult the docstrings. 
+For documentation, please refer to the docstrings. This can be done either by
+using the built in python help command in the interpreter or by refering to the source.
+For example, to learn more about a given function or class, type
+
+```python
+help(nameoffunctionorclass)
+```
+.
+
+Note that the modules containing the class or function need to be imported first.
 
 ## Installation
 
-Once finished, machup packages will be available on PyPi and Conda and can be installed 
-using the following commands respectively. 
+The MachUp package can be installed by navigating to the root directory of the project
+and using the following command. 
 
-'pip install machup'
-
-'conda install machup'
+'pip install .'
 
 ### Prerequisites
 
-* Python version (2.? - 3.?)
-* Scipy/Numpy version (2.? - 3.?)
+* Python3
+* Scipy
+* Numpy
+* numpy-stl
+* Matplotlib (needed for plots used in the examples)
 
 ### Getting the Source Code
 
@@ -110,4 +137,4 @@ Unit tests are implemented using the pytest module and are run using the followi
 Contact doug.hunsaker@usu.edu with any questions.
 
 ##License
-This project is licensed under the ??? license. See LICENSE file for more information. 
+This project is licensed under the MIT license. See LICENSE file for more information. 
